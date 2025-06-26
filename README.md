@@ -7,4 +7,4 @@
 -  implement logging and bad records
 - athena queries for table
 - orchestrate whole flow with step function
-- deploy with ci/cd github actions 
+- deploy with ci/cd github actions 1
