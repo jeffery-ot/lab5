@@ -4,11 +4,12 @@ on:
   push:
     branches:
       - dev
+
 env:
-  AWS_REGION: us-east-1
   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID_DEV }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY_DEV }}
-
+  AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION_DEV }}
+  WORKSPACE_LOCATION: ${{ github.workspace }}
 
 jobs:
   test-glue-jobs:
@@ -30,34 +31,27 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-buildx-
 
-      - name: Build Docker image with cache
-        run: |
-          docker buildx create --use --name gluebuilder || true
-          docker buildx use gluebuilder
-          docker buildx inspect --bootstrap
-
-          docker buildx build \
-            --cache-from=type=local,src=/tmp/.buildx-cache \
-            --cache-to=type=local,dest=/tmp/.buildx-cache-new,mode=max \
-            --file Dockerfile \
-            --tag glue_pyspark_cache:latest \
-            --load .
-
-          rm -rf /tmp/.buildx-cache
-          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
-
       - name: Start Glue PySpark container
         run: |
           docker compose -f docker-compose.yml up -d glue_pyspark
 
-      - name: Wait for container to be ready
-        run: sleep 30
+      - name: Wait for container healthcheck
+        run: |
+          echo "Waiting for container to become healthy..."
+          for i in {1..10}; do
+            status=$(docker inspect --format='{{json .State.Health.Status}}' $(docker ps -qf name=glue_pyspark))
+            if [ "$status" = "\"healthy\"" ]; then
+              echo "Container is healthy!"
+              break
+            fi
+            echo "Waiting... ($i)"
+            sleep 5
+          done
 
       - name: Run Glue job inside container
         run: |
           docker compose exec glue_pyspark \
             spark-submit /home/glue_user/workspace/glue_jobs/extraction.py
-          # Add CLI args here if needed
 
       - name: Stop and clean up containers
         if: always()
