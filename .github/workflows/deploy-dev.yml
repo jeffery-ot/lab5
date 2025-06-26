@@ -1,0 +1,65 @@
+name: data_pipeline_development
+
+on:
+  push:
+    branches:
+      - dev
+
+env:
+  AWS_REGION_DEV: ${{ env.AWS_DEFAULT_REGION }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID_DEV }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY_DEV }}
+  AWS_DEFAULT_REGION: ${{ env.AWS_REGION_DEV }}
+
+jobs:
+  test-glue-jobs:
+    name: Run Glue Job in Docker
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache Docker layers
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
+
+      - name: Build Docker image with cache
+        run: |
+          docker buildx create --use --name gluebuilder || true
+          docker buildx use gluebuilder
+          docker buildx inspect --bootstrap
+
+          docker buildx build \
+            --cache-from=type=local,src=/tmp/.buildx-cache \
+            --cache-to=type=local,dest=/tmp/.buildx-cache-new,mode=max \
+            --file Dockerfile \
+            --tag glue_pyspark_cache:latest \
+            --load .
+
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+
+      - name: Start Glue PySpark container
+        run: |
+          docker compose -f docker-compose.yml up -d glue_pyspark
+
+      - name: Wait for container to be ready
+        run: sleep 30
+
+      - name: Run Glue job inside container
+        run: |
+          docker compose exec glue_pyspark \
+            spark-submit /home/glue_user/workspace/glue_jobs/extraction.py
+          # Add CLI args here if needed
+
+      - name: Stop and clean up containers
+        if: always()
+        run: docker compose -f docker-compose.yml down --volumes
