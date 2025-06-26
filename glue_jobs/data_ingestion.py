@@ -193,7 +193,10 @@ def process_file(spark, file_path: str, output_base: str, archive_prefix: str,
 # ========== MAIN ==========
 
 def main():
-    args = getResolvedOptions(sys.argv, ["JOB_NAME"])
+    # Replaced this:
+    # args = getResolvedOptions(sys.argv, ["JOB_NAME"])
+    args = {"JOB_NAME": "local-job"}
+
 
     sc = SparkContext()
     glue_context = GlueContext(sc)
