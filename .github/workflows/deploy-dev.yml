@@ -48,12 +48,15 @@ jobs:
             sleep 5
           done
 
-      - name: Debug AWS inside container (Optional)
+      - name: Debug AWS inside container 
         run: |
           docker compose exec glue_pyspark bash -c "\
-            echo 'REGION=$AWS_DEFAULT_REGION' && \
-            aws sts get-caller-identity || echo 'AWS CLI not configured inside container' \
+            pip install awscli && \
+            echo REGION=\$AWS_DEFAULT_REGION && \
+            aws sts get-caller-identity \
           "
+
+                "
 
       - name: Run Glue job - extraction.py
         run: |
