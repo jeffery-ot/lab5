@@ -1,5 +1,32 @@
 CREATE SCHEMA "e_commerce_db";
 
+CREATE TABLE "product_data" (
+  "product_id" integer PRIMARY KEY,
+  "department_id" integer,
+  "department" varchar,
+  "product_name" varchar
+);
+
+CREATE TABLE "orders" (
+  "order_num" varchar,
+  "order_id" integer PRIMARY KEY,
+  "user_id" integer,
+  "order_timestamp" timestamp,
+  "total_amount" decimal(10,2),
+  "date" date
+);
+
+CREATE TABLE "order_items" (
+  "id" integer PRIMARY KEY,
+  "order_id" integer,
+  "user_id" integer,
+  "days_since_prior_order" integer,
+  "product_id" integer,
+  "add_to_cart_order" integer,
+  "reordered" boolean,
+  "order_timestamp" timestamp
+);
+
 CREATE TABLE "e_commerce_db"."product_data" (
   "product_id" integer PRIMARY KEY,
   "category_id" integer,
