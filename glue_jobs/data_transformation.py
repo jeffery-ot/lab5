@@ -107,12 +107,21 @@ def parse_s3_path(s3_path: str) -> Tuple[str, str]:
     parsed = urlparse(s3_path)
     return parsed.netloc, parsed.path.lstrip("/")
 
-def ensure_bucket_exists(bucket: str):
-    s3 = boto3.client("s3")
-    buckets = [b["Name"] for b in s3.list_buckets()["Buckets"]]
-    if bucket not in buckets:
+def ensure_bucket_exists(bucket: str, region: str = None):
+    """Ensure S3 bucket exists; create it if not."""
+    s3 = boto3.client("s3", region_name=region)
+    existing_buckets = [b["Name"] for b in s3.list_buckets()["Buckets"]]
+    
+    if bucket not in existing_buckets:
         logger.info(f"Creating bucket: {bucket}")
-        s3.create_bucket(Bucket=bucket)
+        if region and region != "us-east-1":
+            s3.create_bucket(
+                Bucket=bucket,
+                CreateBucketConfiguration={"LocationConstraint": region}
+            )
+        else:
+            s3.create_bucket(Bucket=bucket)
+
 
 def list_latest_partitions(bucket: str, prefix: str) -> Dict[str, str]:
     """Find latest partition for each data type"""
@@ -188,10 +197,10 @@ def write_delta_table(df: DataFrame, table_name: str, output_base: str, mode: st
         for partition_expr in schema_config["partitions"]:
             if "DATE(" in partition_expr:
                 col_name = partition_expr.replace("DATE(", "").replace(")", "")
-                df = df.withColumn(f"partition_date", date_format(col(col_name), "yyyy-MM-dd"))
+                df = df.withColumn(f"order_timestamp", date_format(col(col_name), "yyyy-MM-dd"))
         
-        if "partition_date" in df.columns:
-            writer = writer.partitionBy("partition_date")
+        if "order_timestamp" in df.columns:
+            writer = writer.partitionBy("order_timestamp")
     
     if mode == "overwrite":
         writer.mode("overwrite").save(output_path)
@@ -528,7 +537,15 @@ def validate_transformations(spark, results: Dict[str, str]) -> Dict[str, Dict]:
 
 def main():
     input_bucket, input_prefix = parse_s3_path(INPUT_PATH)
-    ensure_bucket_exists(input_bucket)
+    
+    # Optional: override region manually, or pull from environment
+    region = boto3.session.Session().region_name or "us-east-1"
+    ensure_bucket_exists(input_bucket, region=region)
+    
+    logger.info("Listing latest partitions for curated data...")
+    input_partitions = list_latest_partitions(input_bucket, input_prefix)
+    ...
+
 
     logger.info("Listing latest partitions for curated data...")
     input_partitions = list_latest_partitions(input_bucket, input_prefix)
