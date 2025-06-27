@@ -44,11 +44,14 @@ jobs:
       - name: Debug AWS identity inside container
         run: docker compose exec glue_pyspark aws sts get-caller-identity
 
-      - name: Run Glue job - extraction.py
+      - name:  Test Glue job - extraction.py
         run: docker compose exec glue_pyspark spark-submit /home/glue_user/workspace/glue_jobs/extraction.py
 
       - name: Run Glue job - data_ingestion.py
         run: docker compose exec glue_pyspark spark-submit /home/glue_user/workspace/glue_jobs/data_ingestion.py
+
+      - name: Run Glue job - data_transformation.py
+        run: docker compose exec glue_pyspark spark-submit /home/glue_user/workspace/glue_jobs/data_transformation.py  
 
       - name: Stop and clean up containers
         if: always()
