@@ -1,0 +1,47 @@
+Comment: A description of my state machine
+StartAt: SQS SendMessage
+States:
+  SQS SendMessage:
+    Type: Task
+    Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
+    Arguments:
+      MessageBody: '{% $states.input %}'
+      QueueUrl: https://sqs.us-east-1.amazonaws.com/648637468459/lab5-queue
+    Next: data ingestion job
+  data ingestion job:
+    Type: Task
+    Resource: arn:aws:states:::glue:startJobRun
+    Arguments:
+      JobName: myJobName
+    Next: data transformation job
+  data transformation job:
+    Type: Task
+    Resource: arn:aws:states:::glue:startJobRun
+    Arguments:
+      JobName: myJobName
+    Next: native crawler
+  native crawler:
+    Type: Task
+    Arguments:
+      Name: MyData
+    Resource: arn:aws:states:::aws-sdk:glue:startCrawler
+    Next: symlink crawler
+  symlink crawler:
+    Type: Task
+    Arguments:
+      Name: MyData
+    Resource: arn:aws:states:::aws-sdk:glue:startCrawler
+    Next: Get native crawler
+  Get native crawler:
+    Type: Task
+    Arguments:
+      Name: MyData
+    Resource: arn:aws:states:::aws-sdk:glue:getCrawler
+    Next: Get symlink crawler
+  Get symlink crawler:
+    Type: Task
+    Arguments:
+      Name: MyData
+    Resource: arn:aws:states:::aws-sdk:glue:getCrawler
+    End: true
+QueryLanguage: JSONata
