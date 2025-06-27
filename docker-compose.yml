@@ -1,19 +1,20 @@
+
 services:
   glue_pyspark:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: public.ecr.aws/glue/aws-glue-libs:5
     command: ["pyspark"]
     volumes:
-      - "${WORKSPACE_LOCATION:-.}:/home/glue_user/workspace/"
+      - "${WORKSPACE_LOCATION:-.}:/home/glue_user/workspace/"  # Defaults to current dir if WORKSPACE_LOCATION not set
     environment:
       DISABLE_SSL: "true"
       AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID}"
       AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY}"
       AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION}"
+      # Optional: If using local AWS profiles, uncomment below:
+      # AWS_PROFILE: "${AWS_PROFILE}"
     ports:
-      - "4041:4040"
-      - "18081:18080"
+      - "4041:4040"     # Spark UI
+      - "18081:18080"   # Spark History Server (optional)
     tty: true
     stdin_open: true
     healthcheck:
