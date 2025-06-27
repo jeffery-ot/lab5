@@ -4,24 +4,57 @@ import logging
 import json
 from datetime import datetime
 from urllib.parse import urlparse
+from awsglue.job import Job
+import sys
+from pyspark.sql import SparkSession
 from awsglue.utils import getResolvedOptions
 from awsglue.context import GlueContext
 from awsglue.job import Job
 from pyspark.context import SparkContext
 from pyspark.sql import DataFrame
-from pyspark.sql.functions import *
-from pyspark.sql.types import *
+from pyspark.sql.window import Window
+from pyspark.sql.functions import (
+    col,
+    monotonically_increasing_id,
+    lit,
+    current_timestamp,
+    date_format,
+    row_number,
+    regexp_replace,
+    trim,
+)
 from typing import Dict, Optional, Tuple, List
+
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Glue Context Setup
-sc = SparkContext()
-glueContext = GlueContext(sc)
-spark = glueContext.spark_session
-args = getResolvedOptions(sys.argv, ['JOB_NAME'])
+# SparkSession with Delta + S3 support
+spark = (
+    SparkSession.builder
+    .appName("GlueDeltaJob")
+    .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+    .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+    .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
+    .config("spark.hadoop.fs.s3a.aws.credentials.provider", "com.amazonaws.auth.DefaultAWSCredentialsProviderChain")
+    .config("spark.hadoop.fs.s3a.path.style.access", "true")
+    .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "true")
+    .config("spark.hadoop.fs.s3a.endpoint", "s3.amazonaws.com")
+    .getOrCreate()
+)
+
+# Glue Context
+glueContext = GlueContext(spark.sparkContext)
+
+# Get args
+try:
+    args = getResolvedOptions(sys.argv, ['JOB_NAME'])
+except Exception:
+    args = {'JOB_NAME': 'local_test'}
+
+# Initialize job
 job = Job(glueContext)
 job.init(args['JOB_NAME'], args)
 
