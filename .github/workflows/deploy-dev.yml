@@ -37,6 +37,9 @@ jobs:
             echo "Waiting... ($i)"
             sleep 5
           done
+          
+      - name: Install openpyxl in container
+        run: docker compose exec glue_pyspark pip install openpyxl
 
       - name: Debug AWS identity inside container
         run: docker compose exec glue_pyspark aws sts get-caller-identity
