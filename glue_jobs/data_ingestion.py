@@ -193,12 +193,25 @@ def process_file(spark, file_path: str, output_base: str, archive_prefix: str,
 # ========== MAIN ==========
 
 def main():
-    # Replaced this:
     # args = getResolvedOptions(sys.argv, ["JOB_NAME"])
     args = {"JOB_NAME": "local-job"}
 
-
     sc = SparkContext()
+    
+    # Set S3 access configs via Spark Hadoop configuration
+    hadoop_conf = sc._jsc.hadoopConfiguration()
+    hadoop_conf.set("fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
+    hadoop_conf.set("fs.s3a.aws.credentials.provider", "com.amazonaws.auth.DefaultAWSCredentialsProviderChain")
+    hadoop_conf.set("fs.s3a.path.style.access", "true")  # needed for some regions or custom endpoints
+    hadoop_conf.set("fs.s3a.connection.ssl.enabled", "true")
+    hadoop_conf.set("fs.s3a.endpoint", "s3.amazonaws.com")  # override if using VPC/custom/localstack
+    
+    # Optional: If you're using AWS_SESSION_TOKEN (temporary credentials)
+    # import os
+    # hadoop_conf.set("fs.s3a.access.key", os.environ.get("AWS_ACCESS_KEY_ID", ""))
+    # hadoop_conf.set("fs.s3a.secret.key", os.environ.get("AWS_SECRET_ACCESS_KEY", ""))
+    # hadoop_conf.set("fs.s3a.session.token", os.environ.get("AWS_SESSION_TOKEN", ""))
+
     glue_context = GlueContext(sc)
     spark = glue_context.spark_session
     job = Job(glue_context)
