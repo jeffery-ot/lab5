@@ -32,8 +32,8 @@ jobs:
           echo "AWS_DEFAULT_REGION=${{ secrets.AWS_DEFAULT_REGION_DEV }}" >> .env
           echo "WORKSPACE_LOCATION=${{ github.workspace }}" >> .env
 
-      - name: Start Glue PySpark container
-        run: docker compose -f docker-compose.yml up -d glue_pyspark
+      - name: Build and Start Glue PySpark container
+        run: docker compose -f docker-compose.yml up -d --build glue_pyspark
 
       - name: Wait for container healthcheck
         run: |
@@ -48,22 +48,16 @@ jobs:
             sleep 5
           done
 
-      - name: Debug AWS inside container 
+      - name: Debug AWS identity inside container
         run: |
-          docker compose exec glue_pyspark bash -c "\
-            pip install awscli && \
-            echo REGION=\$AWS_DEFAULT_REGION && \
-            aws sts get-caller-identity \
-          "
-
-                "
+          docker compose exec glue_pyspark bash -c "aws sts get-caller-identity"
 
       - name: Run Glue job - extraction.py
         run: |
           docker compose exec glue_pyspark \
             spark-submit /home/glue_user/workspace/glue_jobs/extraction.py
 
-      - name: Run Glue job - data.py
+      - name: Run Glue job - data_ingestion.py
         run: |
           docker compose exec glue_pyspark \
             spark-submit /home/glue_user/workspace/glue_jobs/data_ingestion.py
