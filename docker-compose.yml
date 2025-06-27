@@ -2,7 +2,7 @@
 services:
   glue_pyspark:
     image: public.ecr.aws/glue/aws-glue-libs:5
-    command: ["/bin/bash", "-c", "pip install openpyxl && pyspark"]
+    command: ["pyspark"]
     volumes:
       - "${WORKSPACE_LOCATION:-.}:/home/glue_user/workspace/"  # Defaults to current dir if WORKSPACE_LOCATION not set
     environment:
