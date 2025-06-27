@@ -17,7 +17,7 @@ from typing import Dict, Optional, Tuple, List
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Constants
+# Constants for schema validation
 SCHEMAS = {
     "order_items": {
         "required_columns": ["id", "order_id", "user_id", "days_since_prior_order", 
