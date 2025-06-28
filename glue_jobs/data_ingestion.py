@@ -206,11 +206,7 @@ def main():
     hadoop_conf.set("fs.s3a.connection.ssl.enabled", "true")
     hadoop_conf.set("fs.s3a.endpoint", "s3.amazonaws.com")  # override if using VPC/custom/localstack
     
-    # Optional: If you're using AWS_SESSION_TOKEN (temporary credentials)
-    # import os
-    # hadoop_conf.set("fs.s3a.access.key", os.environ.get("AWS_ACCESS_KEY_ID", ""))
-    # hadoop_conf.set("fs.s3a.secret.key", os.environ.get("AWS_SECRET_ACCESS_KEY", ""))
-    # hadoop_conf.set("fs.s3a.session.token", os.environ.get("AWS_SESSION_TOKEN", ""))
+
 
     glue_context = GlueContext(sc)
     spark = glue_context.spark_session
