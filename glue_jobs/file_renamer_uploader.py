@@ -16,8 +16,31 @@ from pyspark.context import SparkContext
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+import os
+
+def get_data_directory():
+    """Dynamically find the data directory"""
+    # Try different possible locations
+    possible_paths = [
+        "/home/glue_user/workspace/data/",  # Absolute path for Glue environment
+        "data/",  # Relative to current directory
+        "./data/",  # Explicit relative path
+        os.path.join(os.getcwd(), "data/"),  # Current working directory + data
+    ]
+    
+    for path in possible_paths:
+        if os.path.exists(path):
+            print(f"Found data directory at: {path}")
+            return path
+    
+    # If none found, return the default and let the script handle it
+    return "data/"
+
 # Configuration
-LOCAL_DATA_DIR = "data/"  # Adjust if your data directory path is different
+LOCAL_DATA_DIR = get_data_directory()
+S3_TARGET_BUCKET = "lab5-raw"
+S3_TARGET_PREFIX = "inputs/"
+SUPPORTED_EXTENSIONS = ['.csv', '.xlsx', '.xls'] # Adjust if your data directory path is different
 S3_TARGET_BUCKET = "lab5-raw"
 S3_TARGET_PREFIX = "inputs/"
 SUPPORTED_EXTENSIONS = ['.csv', '.xlsx', '.xls']
@@ -55,10 +78,22 @@ class FileRenamerUploader:
     def find_data_files(self, directory: str) -> List[str]:
         """Find all CSV and XLSX files in the specified directory"""
         files = []
+        logger.info(f"Looking for files in directory: {directory}")
+        logger.info(f"Directory exists: {os.path.exists(directory)}")
+        
         if os.path.exists(directory):
-            for file in os.listdir(directory):
+            all_files = os.listdir(directory)
+            logger.info(f"All files in directory: {all_files}")
+            
+            for file in all_files:
+                logger.info(f"Checking file: {file}")
                 if any(file.lower().endswith(ext) for ext in SUPPORTED_EXTENSIONS):
-                    files.append(os.path.join(directory, file))
+                    full_path = os.path.join(directory, file)
+                    files.append(full_path)
+                    logger.info(f"Added file: {full_path}")
+        else:
+            logger.error(f"Directory does not exist: {directory}")
+            
         return files
     
     def ensure_bucket_exists(self, bucket: str):
