@@ -44,8 +44,10 @@ jobs:
       - name: Debug AWS identity inside container
         run: docker compose exec glue_pyspark aws sts get-caller-identity
 
-      - name:  Test Glue job - extraction.py
-        run: docker compose exec glue_pyspark spark-submit /home/glue_user/workspace/glue_jobs/extraction.py
+      - name:   
+
+      - name:  Test Glue job - file_renamer_uploader.py
+        run: docker compose exec glue_pyspark spark-submit /home/glue_user/workspace/glue_jobs/file_renamer_uploader.py
 
       - name: Run Glue job - data_ingestion.py
         run: docker compose exec glue_pyspark spark-submit /home/glue_user/workspace/glue_jobs/data_ingestion.py
