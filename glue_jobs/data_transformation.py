@@ -380,7 +380,7 @@ def transform_product_data(spark) -> DataFrame:
     SELECT 
         CAST(product_id AS INTEGER) as product_id,
         CAST(department_id AS INTEGER) as category_id,
-        TRIM(REGEXP_REPLACE(product_name, 'product_\\\\d+_name\\\\s*=\\\\s*', '')) as product_name
+        TRIM(REGEXP_REPLACE(product_name, 'Product_\\\\d+_', '')) as product_name
     FROM raw_product_data 
     WHERE product_id IS NOT NULL 
     AND department_id IS NOT NULL
@@ -417,7 +417,7 @@ def transform_orders(spark) -> DataFrame:
     """Transform orders using Spark SQL"""
     sql = """
     SELECT 
-        order_num,
+        Cast(order_num AS INTEGER) as order_num,
         CAST(order_id AS INTEGER) as order_id,
         CAST(user_id AS INTEGER) as user_id,
         CAST(order_timestamp AS TIMESTAMP) as order_timestamp,
