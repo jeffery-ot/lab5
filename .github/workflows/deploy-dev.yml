@@ -26,37 +26,34 @@ jobs:
           echo "AWS_DEFAULT_REGION=${{ secrets.AWS_DEFAULT_REGION }}" >> .env
           echo "WORKSPACE_LOCATION=${{ github.workspace }}" >> .env
       
-      - name: Start Glue PySpark container
-        run: docker compose -f docker-compose.yml up -d glue_pyspark
+      # - name: Start Glue PySpark container
+      #   run: docker compose -f docker-compose.yml up -d glue_pyspark
       
-      - name: Wait for container healthcheck
-        run: |
-          echo "Waiting for container to become healthy..."
-          for i in {1..10}; do
-            status=$(docker inspect --format='{{json .State.Health.Status}}' $(docker ps -qf name=glue_pyspark))
-            if [ "$status" = "\"healthy\"" ]; then
-              echo "Container is healthy!"
-              break
-            fi
-            echo "Waiting... ($i)"
-            sleep 5
-          done
+      # - name: Wait for container healthcheck
+      #   run: |
+      #     echo "Waiting for container to become healthy..."
+      #     for i in {1..10}; do
+      #       status=$(docker inspect --format='{{json .State.Health.Status}}' $(docker ps -qf name=glue_pyspark))
+      #       if [ "$status" = "\"healthy\"" ]; then
+      #         echo "Container is healthy!"
+      #         break
+      #       fi
+      #       echo "Waiting... ($i)"
+      #       sleep 5
+      #     done
       
-      - name: Install openpyxl in container
-        run: docker compose exec glue_pyspark pip install openpyxl
+      # - name: Install openpyxl in container
+      #   run: docker compose exec glue_pyspark pip install openpyxl
       
-      - name: Debug AWS identity inside container
-        run: docker compose exec glue_pyspark aws sts get-caller-identity
+      # - name: Debug AWS identity inside container
+      #   run: docker compose exec glue_pyspark aws sts get-caller-identity
       
-      # Test Glue jobs locally first
-      - name: Test Glue job - file_renamer_uploader.py
-        run: docker compose exec glue_pyspark spark-submit /home/glue_user/workspace/glue_jobs/file_renamer_uploader.py
+      # # Test Glue jobs locally first
+      # - name: Test Glue job - data_ingestion.py
+      #   run: docker compose exec glue_pyspark spark-submit /home/glue_user/workspace/glue_jobs/data_ingestion.py
       
-      - name: Test Glue job - data_ingestion.py
-        run: docker compose exec glue_pyspark spark-submit /home/glue_user/workspace/glue_jobs/data_ingestion.py
-      
-      - name: Test Glue job - data_transformation.py
-        run: docker compose exec glue_pyspark spark-submit /home/glue_user/workspace/glue_jobs/data_transformation.py
+      # - name: Test Glue job - data_transformation.py
+      #   run: docker compose exec glue_pyspark spark-submit /home/glue_user/workspace/glue_jobs/data_transformation.py
       
       - name: Stop and clean up containers
         if: always()
@@ -91,8 +88,7 @@ jobs:
                 "MaxRetries": 0,
                 "Timeout": 2880,
                 "GlueVersion": "4.0",
-                "MaxCapacity": 2.0,
-                "WorkerType": "Standard",
+                "WorkerType": "G.1X",
                 "NumberOfWorkers": 2
               }'
           else
@@ -110,8 +106,7 @@ jobs:
               --max-retries 0 \
               --timeout 2880 \
               --glue-version "4.0" \
-              --max-capacity 2.0 \
-              --worker-type Standard \
+              --worker-type G.1X \
               --number-of-workers 2
           fi
       
@@ -138,8 +133,7 @@ jobs:
                 "MaxRetries": 0,
                 "Timeout": 2880,
                 "GlueVersion": "4.0",
-                "MaxCapacity": 2.0,
-                "WorkerType": "Standard",
+                "WorkerType": "G.1X",
                 "NumberOfWorkers": 2
               }'
           else
@@ -157,8 +151,7 @@ jobs:
               --max-retries 0 \
               --timeout 2880 \
               --glue-version "4.0" \
-              --max-capacity 2.0 \
-              --worker-type Standard \
+              --worker-type G.1X \
               --number-of-workers 2
           fi
       
