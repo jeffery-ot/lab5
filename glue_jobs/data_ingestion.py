@@ -11,6 +11,7 @@ from awsglue.job import Job
 from pyspark.context import SparkContext
 from pyspark.sql import DataFrame
 from pyspark.sql.functions import *
+from pyspark.sql.window import Window
 from typing import Dict, Optional, Tuple, List
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -32,13 +33,14 @@ SCHEMAS = {
         "optional_columns": ["date"]
     },
     "product_data": {
-        "required_columns": ["product_id", "department_id", "department", "product_name"],
+        "required_columns": ["product_id", "department", "product_name"],
         "optional_columns": []
     }
 }
 
 SUPPORTED_EXTENSIONS = ['.csv', '.xlsx', '.xls']
 MANIFEST_KEY = "manifest/processed_files.json"
+DEPARTMENT_MAPPING_KEY = "manifest/department_mappings.json"
 
 # Batch processing configuration
 BATCH_SIZE = 10  # Number of files per batch
@@ -118,6 +120,81 @@ def read_file(spark, file_path: str) -> DataFrame:
         df = pd.read_excel(local_path)
         return spark.createDataFrame(df)
 
+def read_department_mappings(bucket: str) -> Dict[str, int]:
+    """Read existing department mappings from S3"""
+    s3 = boto3.client("s3")
+    try:
+        obj = s3.get_object(Bucket=bucket, Key=DEPARTMENT_MAPPING_KEY)
+        content = obj["Body"].read().decode("utf-8")
+        return json.loads(content)
+    except s3.exceptions.NoSuchKey:
+        logger.info("No existing department mappings found, starting fresh")
+        return {}
+    except Exception as e:
+        logger.warning(f"Failed to read department mappings: {e}")
+        return {}
+
+def save_department_mappings(bucket: str, mappings: Dict[str, int]):
+    """Save department mappings to S3"""
+    s3 = boto3.client("s3")
+    local_path = "/tmp/department_mappings.json"
+    with open(local_path, "w") as f:
+        json.dump(mappings, f, indent=2)
+    s3.upload_file(local_path, bucket, DEPARTMENT_MAPPING_KEY)
+    logger.info(f"Saved department mappings with {len(mappings)} entries")
+
+def clean_product_data(spark, df: DataFrame, manifest_bucket: str) -> DataFrame:
+    """Clean product data by generating consistent department IDs across all batches"""
+    logger.info("Cleaning product data - generating consistent department IDs")
+    
+    # Check if we have a compromised department_id column to drop
+    if "department_id" in df.columns:
+        logger.info("Dropping compromised department_id column")
+        df = df.drop("department_id")
+    
+    # Read existing department mappings
+    existing_mappings = read_department_mappings(manifest_bucket)
+    
+    # Get distinct departments from current batch
+    distinct_departments = [row["department"] for row in df.select("department").distinct().collect()]
+    
+    # Create or update department mappings
+    updated_mappings = existing_mappings.copy()
+    new_departments = []
+    
+    # Find the next available ID
+    next_id = max(existing_mappings.values()) + 1 if existing_mappings else 1
+    
+    for dept_name in distinct_departments:
+        if dept_name not in updated_mappings:
+            updated_mappings[dept_name] = next_id
+            new_departments.append(dept_name)
+            logger.info(f"New department '{dept_name}' -> ID {next_id}")
+            next_id += 1
+        else:
+            logger.info(f"Existing department '{dept_name}' -> ID {updated_mappings[dept_name]}")
+    
+    # Save updated mappings back to S3 if we have new departments
+    if new_departments:
+        save_department_mappings(manifest_bucket, updated_mappings)
+        logger.info(f"Added {len(new_departments)} new department mappings")
+    
+    # Create DataFrame from current batch's department mappings
+    current_mappings = [(dept, updated_mappings[dept]) for dept in distinct_departments]
+    department_df = spark.createDataFrame(current_mappings, ["department", "department_id"])
+    
+    # Join the original DataFrame with the department mapping
+    cleaned_df = df.join(department_df, on="department", how="left")
+    
+    # Reorder columns to put department_id after department
+    columns = df.columns
+    if "department" in columns:
+        dept_index = columns.index("department")
+        new_columns = columns[:dept_index+1] + ["department_id"] + columns[dept_index+1:]
+        cleaned_df = cleaned_df.select(*new_columns)
+    
+    return cleaned_df
+
 def identify_data_type(df: DataFrame) -> Optional[str]:
     cols = set(df.columns)
     for dtype, schema in SCHEMAS.items():
@@ -142,19 +219,25 @@ def validate_data_quality(df: DataFrame, data_type: str) -> Dict[str, any]:
     }
 
 def write_batch_output(dfs_with_metadata: List[Tuple[DataFrame, str, List[str]]], 
-                      data_type: str, output_base: str) -> str:
+                      data_type: str, output_base: str, spark, manifest_bucket: str) -> str:
     """Write multiple DataFrames as a single batch output"""
     timestamp = datetime.utcnow().strftime("%Y-%m-%d_%H-%M-%S")
     output_path = f"{output_base}/{data_type}/dt={timestamp}/"
     
     if len(dfs_with_metadata) == 1:
-        # Single file - write directly
+        # Single file - write directly (apply cleaning if needed)
         df, _, _ = dfs_with_metadata[0]
+        if data_type == "product_data":
+            df = clean_product_data(spark, df, manifest_bucket)
         df.write.mode("overwrite").parquet(output_path)
     else:
         # Multiple files - union them with source tracking
         combined_dfs = []
         for df, source_file, _ in dfs_with_metadata:
+            # Apply cleaning if this is product data
+            if data_type == "product_data":
+                df = clean_product_data(spark, df, manifest_bucket)
+            
             # Add source file column for traceability
             df_with_source = df.withColumn("source_file", lit(source_file))
             combined_dfs.append(df_with_source)
@@ -293,8 +376,8 @@ def process_file_batch(spark, file_paths: List[str], output_base: str,
         
         for data_type, dfs_with_metadata in data_type_groups.items():
             try:
-                # Write batch output
-                output_path = write_batch_output(dfs_with_metadata, data_type, output_base)
+                # Write batch output (cleaning will be applied inside write_batch_output)
+                output_path = write_batch_output(dfs_with_metadata, data_type, output_base, spark, manifest_bucket)
                 
                 # Collect file paths for archiving and manifest update
                 batch_file_paths = [file_path for _, file_path, _ in dfs_with_metadata]
