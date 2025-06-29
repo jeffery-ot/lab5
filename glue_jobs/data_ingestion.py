@@ -448,11 +448,12 @@ def main():
         spark, all_batches, OUTPUT_PATH, ARCHIVE_PATH, manifest_bucket
     )
 
+    import builtins
     # Log summary
-    total_files = sum(result.get('total_files', 0) for result in batch_results)
-    successful_files = sum(result.get('successful_files', 0) for result in batch_results)
-    failed_files = sum(result.get('failed_files', 0) for result in batch_results)
-
+    total_files = builtins.sum(result.get('total_files', 0) for result in batch_results)
+    successful_files = builtins.sum(result.get('successful_files', 0) for result in batch_results)
+    failed_files = builtins.sum(result.get('failed_files', 0) for result in batch_results)
+    
     logger.info(f"Batch processing completed:")
     logger.info(f"  Total files: {total_files}")
     logger.info(f"  Successful: {successful_files}")
