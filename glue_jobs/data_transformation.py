@@ -24,6 +24,7 @@ from pyspark.sql.functions import (
     trim,
 )
 from typing import Dict, Optional, Tuple, List
+from collections import defaultdict
 
 
 # Set up logging
@@ -50,9 +51,13 @@ glueContext = GlueContext(spark.sparkContext)
 
 # Get args
 try:
-    args = getResolvedOptions(sys.argv, ['JOB_NAME'])
+    args = getResolvedOptions(sys.argv, ['JOB_NAME', 'BATCH_SIZE', 'MAX_BATCHES'])
+    BATCH_SIZE = int(args.get('BATCH_SIZE', 5))  # Process 5 partitions per batch by default
+    MAX_BATCHES = int(args.get('MAX_BATCHES', 10))  # Maximum number of batches to process
 except Exception:
     args = {'JOB_NAME': 'local_test'}
+    BATCH_SIZE = 5
+    MAX_BATCHES = 10
 
 # Initialize job
 job = Job(glueContext)
@@ -64,6 +69,7 @@ OUTPUT_PATH = "s3://lab5-lakehouse-dwh/"
 ARCHIVE_PATH = "s3://lab5-processed/archived-curated/"
 REJECTED_PATH = "s3://lab5-lakehouse-dwh/rejected_records/"
 MANIFEST_KEY = "manifest/transformation_processed.json"
+BATCH_STATE_KEY = "manifest/batch_processing_state.json"
 
 # Table schema definitions (unchanged)
 TABLE_SCHEMAS = {
@@ -96,10 +102,7 @@ TABLE_SCHEMAS = {
     }
 }
 
-
-# Utility, validation, transformation, and manifest functions here...
-# Copy all the utility and transformation functions from the previous script.
-# (For brevity, you can place all the previously shown functions without change.)
+# ========== BATCH PROCESSING UTILITIES ==========
 
 def parse_s3_path(s3_path: str) -> Tuple[str, str]:
     if not s3_path.startswith("s3://"):
@@ -122,55 +125,143 @@ def ensure_bucket_exists(bucket: str, region: str = None):
         else:
             s3.create_bucket(Bucket=bucket)
 
-
-def list_latest_partitions(bucket: str, prefix: str) -> Dict[str, str]:
-    """Find latest partition for each data type"""
+def list_all_partitions(bucket: str, prefix: str) -> Dict[str, List[str]]:
+    """Find all partitions for each data type, organized by table"""
     s3 = boto3.client("s3")
     paginator = s3.get_paginator("list_objects_v2")
     
-    partitions = {}
+    table_partitions = defaultdict(list)
+    
     for page in paginator.paginate(Bucket=bucket, Prefix=prefix, Delimiter="/"):
         for prefix_info in page.get("CommonPrefixes", []):
             table_path = prefix_info["Prefix"]
             table_name = table_path.split("/")[-2]
             
-            # Find latest dt partition
+            # Find all dt partitions for this table
             table_paginator = s3.get_paginator("list_objects_v2")
-            latest_dt = ""
             for table_page in table_paginator.paginate(Bucket=bucket, Prefix=table_path, Delimiter="/"):
                 for dt_prefix in table_page.get("CommonPrefixes", []):
                     dt_path = dt_prefix["Prefix"]
                     if "dt=" in dt_path:
                         dt_value = dt_path.split("dt=")[1].rstrip("/")
-                        if dt_value > latest_dt:
-                            latest_dt = dt_value
-            
-            if latest_dt:
-                partitions[table_name] = f"s3://{bucket}/{table_path}dt={latest_dt}/"
+                        partition_path = f"s3://{bucket}/{dt_path}"
+                        table_partitions[table_name].append({
+                            "path": partition_path,
+                            "dt": dt_value,
+                            "table": table_name
+                        })
     
-    return partitions
+    # Sort partitions by date
+    for table_name in table_partitions:
+        table_partitions[table_name].sort(key=lambda x: x["dt"])
+    
+    return dict(table_partitions)
 
-def archive_partition(source_path: str, archive_base: str, table_name: str):
-    """Archive processed partition"""
+def get_processed_partitions(bucket: str) -> Dict[str, List[str]]:
+    """Get list of already processed partitions from state file"""
     s3 = boto3.client("s3")
-    bucket, key_prefix = parse_s3_path(source_path)
-    archive_bucket, archive_prefix = parse_s3_path(archive_base)
+    try:
+        obj = s3.get_object(Bucket=bucket, Key=BATCH_STATE_KEY)
+        content = obj["Body"].read().decode("utf-8")
+        state = json.loads(content)
+        return state.get("processed_partitions", {})
+    except s3.exceptions.NoSuchKey:
+        return {}
+    except Exception as e:
+        logger.warning(f"Failed to read batch state: {e}")
+        return {}
+
+def update_processed_state(bucket: str, processed_partitions: Dict[str, List[str]]):
+    """Update the batch processing state file"""
+    s3 = boto3.client("s3")
     
-    dt_value = source_path.split("dt=")[1].rstrip("/")
-    archive_key = f"{archive_prefix}{table_name}/dt={dt_value}/"
+    # Read existing state
+    existing_state = get_processed_partitions(bucket)
     
-    paginator = s3.get_paginator("list_objects_v2")
-    for page in paginator.paginate(Bucket=bucket, Prefix=key_prefix):
-        for obj in page.get("Contents", []):
-            source_key = obj["Key"]
-            dest_key = source_key.replace(key_prefix, archive_key)
-            s3.copy_object(
-                Bucket=archive_bucket, 
-                CopySource={"Bucket": bucket, "Key": source_key}, 
-                Key=dest_key
-            )
+    # Merge with new processed partitions
+    for table_name, partitions in processed_partitions.items():
+        if table_name not in existing_state:
+            existing_state[table_name] = []
+        existing_state[table_name].extend(partitions)
+        # Remove duplicates and sort
+        existing_state[table_name] = sorted(list(set(existing_state[table_name])))
     
-    logger.info(f"Archived {table_name} partition to {archive_base}{table_name}/dt={dt_value}/")
+    state = {
+        "processed_partitions": existing_state,
+        "last_updated": datetime.now().isoformat() + "Z"
+    }
+    
+    local_path = "/tmp/batch_state.json"
+    with open(local_path, "w") as f:
+        json.dump(state, f, indent=2)
+    s3.upload_file(local_path, bucket, BATCH_STATE_KEY)
+    logger.info("Updated batch processing state")
+
+def create_batches(all_partitions: Dict[str, List[str]], processed_partitions: Dict[str, List[str]], batch_size: int) -> List[Dict[str, List[str]]]:
+    """Create batches of unprocessed partitions"""
+    batches = []
+    
+    # Find unprocessed partitions for each table
+    unprocessed = {}
+    for table_name, partitions in all_partitions.items():
+        processed_paths = processed_partitions.get(table_name, [])
+        unprocessed_partitions = [
+            p for p in partitions 
+            if p["path"] not in processed_paths
+        ]
+        if unprocessed_partitions:
+            unprocessed[table_name] = unprocessed_partitions
+    
+    if not unprocessed:
+        return []
+    
+    # Create batches by grouping partitions across tables
+    max_partitions = max(len(partitions) for partitions in unprocessed.values())
+    
+    for batch_idx in range(0, max_partitions, batch_size):
+        batch = {}
+        has_data = False
+        
+        for table_name, partitions in unprocessed.items():
+            batch_partitions = partitions[batch_idx:batch_idx + batch_size]
+            if batch_partitions:
+                batch[table_name] = batch_partitions
+                has_data = True
+        
+        if has_data:
+            batches.append(batch)
+    
+    return batches
+
+def archive_batch_partitions(batch_partitions: Dict[str, List[str]], archive_base: str):
+    """Archive all partitions in a batch"""
+    s3 = boto3.client("s3")
+    
+    for table_name, partitions in batch_partitions.items():
+        for partition_info in partitions:
+            source_path = partition_info["path"]
+            dt_value = partition_info["dt"]
+            
+            bucket, key_prefix = parse_s3_path(source_path)
+            archive_bucket, archive_prefix = parse_s3_path(archive_base)
+            
+            archive_key = f"{archive_prefix}{table_name}/dt={dt_value}/"
+            
+            try:
+                paginator = s3.get_paginator("list_objects_v2")
+                for page in paginator.paginate(Bucket=bucket, Prefix=key_prefix):
+                    for obj in page.get("Contents", []):
+                        source_key = obj["Key"]
+                        dest_key = source_key.replace(key_prefix.rstrip("/"), archive_key.rstrip("/"))
+                        s3.copy_object(
+                            Bucket=archive_bucket, 
+                            CopySource={"Bucket": bucket, "Key": source_key}, 
+                            Key=dest_key
+                        )
+                
+                logger.info(f"Archived {table_name} partition dt={dt_value}")
+            except Exception as e:
+                logger.error(f"Failed to archive {table_name} partition dt={dt_value}: {e}")
 
 def write_rejected_records(df: DataFrame, table_name: str, rejection_reason: str):
     """Log rejected records with reasons"""
@@ -197,10 +288,10 @@ def write_delta_table(df: DataFrame, table_name: str, output_base: str, mode: st
         for partition_expr in schema_config["partitions"]:
             if "DATE(" in partition_expr:
                 col_name = partition_expr.replace("DATE(", "").replace(")", "")
-                df = df.withColumn(f"order_timestamp", date_format(col(col_name), "yyyy-MM-dd"))
+                df = df.withColumn(f"order_date", date_format(col(col_name), "yyyy-MM-dd"))
         
-        if "order_timestamp" in df.columns:
-            writer = writer.partitionBy("order_timestamp")
+        if "order_date" in df.columns:
+            writer = writer.partitionBy("order_date")
     
     if mode == "overwrite":
         writer.mode("overwrite").save(output_path)
@@ -347,17 +438,19 @@ def read_manifest_json(bucket: str) -> List[Dict[str, str]]:
         logger.warning(f"Failed to read manifest: {e}")
         return []
 
-def update_manifest_json(bucket: str, processed_partitions: Dict[str, str]):
+def update_manifest_json(bucket: str, processed_batch: Dict[str, List[str]]):
     s3 = boto3.client("s3")
     manifest = read_manifest_json(bucket)
     
-    for table_name, partition_path in processed_partitions.items():
-        new_record = {
-            "table_name": table_name,
-            "partition_path": partition_path,
-            "processed_at": datetime.now().isoformat() + "Z"
-        }
-        manifest.append(new_record)
+    for table_name, partitions in processed_batch.items():
+        for partition_info in partitions:
+            new_record = {
+                "table_name": table_name,
+                "partition_path": partition_info["path"],
+                "dt": partition_info["dt"],
+                "processed_at": datetime.now().isoformat() + "Z"
+            }
+            manifest.append(new_record)
     
     local_path = "/tmp/transformation_manifest.json"
     with open(local_path, "w") as f:
@@ -367,12 +460,28 @@ def update_manifest_json(bucket: str, processed_partitions: Dict[str, str]):
 
 # ========== SPARK SQL TRANSFORMATIONS ==========
 
-def create_temp_views(spark, input_partitions: Dict[str, str]):
-    """Create temporary views for Spark SQL"""
-    for table_name, partition_path in input_partitions.items():
-        df = spark.read.parquet(partition_path)
-        df.createOrReplaceTempView(f"raw_{table_name}")
-        logger.info(f"Created temp view: raw_{table_name}")
+def create_temp_views_for_batch(spark, batch_partitions: Dict[str, List[str]]):
+    """Create temporary views for batch processing by combining multiple partitions"""
+    for table_name, partitions in batch_partitions.items():
+        partition_paths = [p["path"] for p in partitions]
+        
+        # Read and union all partitions for this table
+        dfs = []
+        for path in partition_paths:
+            try:
+                df = spark.read.parquet(path)
+                dfs.append(df)
+            except Exception as e:
+                logger.warning(f"Failed to read partition {path}: {e}")
+        
+        if dfs:
+            # Union all DataFrames
+            combined_df = dfs[0]
+            for df in dfs[1:]:
+                combined_df = combined_df.union(df)
+            
+            combined_df.createOrReplaceTempView(f"raw_{table_name}")
+            logger.info(f"Created temp view: raw_{table_name} with {combined_df.count()} records from {len(dfs)} partitions")
 
 def transform_product_data(spark) -> DataFrame:
     """Transform product_data using Spark SQL"""
@@ -417,7 +526,7 @@ def transform_orders(spark) -> DataFrame:
     """Transform orders using Spark SQL"""
     sql = """
     SELECT 
-        Cast(order_num AS INTEGER) as order_num,
+        CAST(order_num AS INTEGER) as order_num,
         CAST(order_id AS INTEGER) as order_id,
         CAST(user_id AS INTEGER) as user_id,
         CAST(order_timestamp AS TIMESTAMP) as order_timestamp,
@@ -447,50 +556,50 @@ def transform_order_items(spark) -> DataFrame:
     """
     return spark.sql(sql)
 
-# ========== MAIN PROCESSING ==========
+# ========== BATCH PROCESSING ==========
 
-def process_normalization(spark, input_partitions: Dict[str, str], output_base: str) -> Dict[str, str]:
-    """Process all table transformations with data quality"""
+def process_batch_normalization(spark, batch_partitions: Dict[str, List[str]], output_base: str) -> Dict[str, str]:
+    """Process a batch of partitions with data quality"""
     results = {}
     
-    # Create temporary views
-    create_temp_views(spark, input_partitions)
+    # Create temporary views for the batch
+    create_temp_views_for_batch(spark, batch_partitions)
     
     # Process in dependency order: category -> users -> product_data -> orders -> order_items
     
     # 1. Category table (no dependencies)
-    if "product_data" in input_partitions:
-        logger.info("Processing category table")
+    if "product_data" in batch_partitions:
+        logger.info("Processing category table for batch")
         category_raw = create_category_table(spark)
         category_clean, category_rejected = validate_schema_and_quality(category_raw, "category")
-        results["category"] = write_delta_table(category_clean, "category", output_base, "overwrite")
+        results["category"] = write_delta_table(category_clean, "category", output_base, "merge")
     
     # 2. Users table (no dependencies)  
-    if "orders" in input_partitions:
-        logger.info("Processing users table")
+    if "orders" in batch_partitions:
+        logger.info("Processing users table for batch")
         users_raw = create_users_table(spark)
         users_clean, users_rejected = validate_schema_and_quality(users_raw, "users")
         results["users"] = write_delta_table(users_clean, "users", output_base, "merge")
     
     # 3. Product data (depends on category)
-    if "product_data" in input_partitions:
-        logger.info("Processing product_data table")
+    if "product_data" in batch_partitions:
+        logger.info("Processing product_data table for batch")
         product_raw = transform_product_data(spark)
         product_clean, product_rejected = validate_schema_and_quality(product_raw, "product_data")
         product_final, product_fk_rejected = check_referential_integrity(spark, "product_data", product_clean)
         results["product_data"] = write_delta_table(product_final, "product_data", output_base, "merge")
     
     # 4. Orders (depends on users)
-    if "orders" in input_partitions:
-        logger.info("Processing orders table")
+    if "orders" in batch_partitions:
+        logger.info("Processing orders table for batch")
         orders_raw = transform_orders(spark)
         orders_clean, orders_rejected = validate_schema_and_quality(orders_raw, "orders")
         orders_final, orders_fk_rejected = check_referential_integrity(spark, "orders", orders_clean)
         results["orders"] = write_delta_table(orders_final, "orders", output_base, "merge")
     
     # 5. Order items (depends on orders and products)
-    if "order_items" in input_partitions:
-        logger.info("Processing order_items table")
+    if "order_items" in batch_partitions:
+        logger.info("Processing order_items table for batch")
         order_items_raw = transform_order_items(spark)
         order_items_clean, order_items_rejected = validate_schema_and_quality(order_items_raw, "order_items")
         order_items_final, order_items_fk_rejected = check_referential_integrity(spark, "order_items", order_items_clean)
@@ -532,7 +641,6 @@ def validate_transformations(spark, results: Dict[str, str]) -> Dict[str, Dict]:
     
     return validation_results
 
-
 # ========== JOB ENTRY POINT ==========
 
 def main():
@@ -542,34 +650,113 @@ def main():
     region = boto3.session.Session().region_name or "us-east-1"
     ensure_bucket_exists(input_bucket, region=region)
     
-    logger.info("Listing latest partitions for curated data...")
-    input_partitions = list_latest_partitions(input_bucket, input_prefix)
-    ...
-
-
-    logger.info("Listing latest partitions for curated data...")
-    input_partitions = list_latest_partitions(input_bucket, input_prefix)
-    if not input_partitions:
-        logger.warning("No new partitions found to process.")
+    logger.info("Discovering all available partitions...")
+    all_partitions = list_all_partitions(input_bucket, input_prefix)
+    if not all_partitions:
+        logger.warning("No partitions found to process.")
         return
-
-    logger.info(f"Found partitions: {json.dumps(input_partitions, indent=2)}")
-
-    logger.info("Starting transformation process...")
-    processed_paths = process_normalization(spark, input_partitions, OUTPUT_PATH)
-
-    logger.info("Validating transformations...")
-    validation_results = validate_transformations(spark, processed_paths)
-    logger.info(json.dumps(validation_results, indent=2))
-
-    logger.info("Archiving processed data...")
-    for table_name, partition_path in input_partitions.items():
-        archive_partition(partition_path, ARCHIVE_PATH, table_name)
-
-    logger.info("Updating manifest...")
-    update_manifest_json(input_bucket, input_partitions)
-
-    logger.info("Job completed successfully.")
+    
+    total_partitions = sum(len(partitions) for partitions in all_partitions.values())
+    logger.info(f"Found {total_partitions} total partitions across {len(all_partitions)} tables")
+    
+    logger.info("Checking processed partitions state...")
+    processed_partitions = get_processed_partitions(input_bucket)
+    
+    logger.info(f"Creating batches with batch size: {BATCH_SIZE}")
+    batches = create_batches(all_partitions, processed_partitions, BATCH_SIZE)
+    
+    if not batches:
+        logger.info("No new partitions to process.")
+        return
+    
+    logger.info(f"Created {len(batches)} batches to process")
+    
+    # Limit number of batches processed in one job run
+    batches_to_process = batches[:MAX_BATCHES]
+    if len(batches) > MAX_BATCHES:
+        logger.info(f"Processing first {MAX_BATCHES} batches out of {len(batches)} total batches")
+    
+    batch_results = []
+    processed_batch_paths = []
+    
+    for batch_idx, batch_partitions in enumerate(batches_to_process, 1):
+        logger.info(f"Processing batch {batch_idx}/{len(batches_to_process)}")
+        
+        # Log batch details
+        batch_summary = {}
+        for table_name, partitions in batch_partitions.items():
+            batch_summary[table_name] = len(partitions)
+        logger.info(f"Batch {batch_idx} contains: {batch_summary}")
+        
+        try:
+            # Process the batch
+            processed_paths = process_batch_normalization(spark, batch_partitions, OUTPUT_PATH)
+            
+            # Validate transformations
+            validation_results = validate_transformations(spark, processed_paths)
+            
+            batch_result = {
+                "batch_number": batch_idx,
+                "processed_paths": processed_paths,
+                "validation_results": validation_results,
+                "partitions_processed": batch_partitions
+            }
+            batch_results.append(batch_result)
+            
+            # Archive processed partitions
+            logger.info(f"Archiving batch {batch_idx} partitions...")
+            archive_batch_partitions(batch_partitions, ARCHIVE_PATH)
+            
+            # Update manifest
+            logger.info(f"Updating manifest for batch {batch_idx}...")
+            update_manifest_json(input_bucket, batch_partitions)
+            
+            # Track processed partitions for state update
+            processed_batch_paths.append(batch_partitions)
+            
+            logger.info(f"Successfully processed batch {batch_idx}")
+            
+        except Exception as e:
+            logger.error(f"Failed to process batch {batch_idx}: {e}")
+            # Continue with next batch instead of failing completely
+            continue
+    
+    # Update batch processing state
+    if processed_batch_paths:
+        logger.info("Updating batch processing state...")
+        all_processed = {}
+        for batch in processed_batch_paths:
+            for table_name, partitions in batch.items():
+                if table_name not in all_processed:
+                    all_processed[table_name] = []
+                all_processed[table_name].extend([p["path"] for p in partitions])
+        
+        update_processed_state(input_bucket, all_processed)
+    
+    # Summary report
+    successful_batches = len([r for r in batch_results if "processed_paths" in r])
+    total_records_processed = 0
+    
+    logger.info("=== BATCH PROCESSING SUMMARY ===")
+    logger.info(f"Total batches processed: {successful_batches}/{len(batches_to_process)}")
+    
+    for result in batch_results:
+        if "validation_results" in result:
+            batch_records = sum(
+                v.get("row_count", 0) for v in result["validation_results"].values()
+                if isinstance(v, dict) and "row_count" in v
+            )
+            total_records_processed += batch_records
+            logger.info(f"Batch {result['batch_number']}: {batch_records} records processed")
+    
+    logger.info(f"Total records processed across all batches: {total_records_processed}")
+    
+    # Check if there are remaining batches
+    remaining_batches = len(batches) - len(batches_to_process)
+    if remaining_batches > 0:
+        logger.info(f"Note: {remaining_batches} batches remaining for next job run")
+    
+    logger.info("Batch processing job completed successfully.")
 
 if __name__ == "__main__":
     main()

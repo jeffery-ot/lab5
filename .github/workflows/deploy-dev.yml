@@ -51,8 +51,8 @@ jobs:
       - name:  Glue job - data_ingestion.py
         run: docker compose exec glue_pyspark spark-submit /home/glue_user/workspace/glue_jobs/data_ingestion.py
 
-      # - name: Run Glue jobb - data_transformation.py
-      #   run: docker compose exec glue_pyspark spark-submit /home/glue_user/workspace/glue_jobs/data_transformation.py  
+      - name: Run Glue jobb - data_transformation.py
+        run: docker compose exec glue_pyspark spark-submit /home/glue_user/workspace/glue_jobs/data_transformation.py  
 
       - name: Stop and clean up containers
         if: always()
