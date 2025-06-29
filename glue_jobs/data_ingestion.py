@@ -11,6 +11,7 @@ from awsglue.job import Job
 from pyspark.context import SparkContext
 from pyspark.sql import DataFrame
 from pyspark.sql.functions import *
+from pyspark.sql.window import Window
 from typing import Dict, Optional, Tuple, List
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -31,7 +32,7 @@ SCHEMAS = {
         "optional_columns": ["date"]
     },
     "product_data": {
-        "required_columns": ["product_id", "department_id", "department", "product_name"],
+        "required_columns": ["product_id", "department", "product_name"],
         "optional_columns": []
     }
 }
@@ -117,6 +118,45 @@ def read_file(spark, file_path: str) -> DataFrame:
         df = pd.read_excel(local_path)
         return spark.createDataFrame(df)
 
+def clean_product_data(df: DataFrame) -> DataFrame:
+    """Clean product data by generating new department IDs and dropping the original compromised one"""
+    logger.info("Cleaning product data - generating new department IDs")
+    
+    # Check if we have a compromised department_id column to drop
+    if "department_id" in df.columns:
+        logger.info("Dropping compromised department_id column")
+        df = df.drop("department_id")
+    
+    # Create a mapping of unique departments to sequential IDs
+    # First, get distinct departments
+    distinct_departments = df.select("department").distinct().collect()
+    
+    # Create department mapping with sequential IDs starting from 1
+    department_mapping = []
+    for i, row in enumerate(distinct_departments, 1):
+        department_mapping.append((row["department"], i))
+    
+    # Create a DataFrame from the mapping
+    department_df = spark.createDataFrame(department_mapping, ["department", "department_id"])
+    
+    # Join the original DataFrame with the department mapping
+    cleaned_df = df.join(department_df, on="department", how="left")
+    
+    # Reorder columns to put department_id after department
+    columns = df.columns
+    if "department" in columns:
+        dept_index = columns.index("department")
+        new_columns = columns[:dept_index+1] + ["department_id"] + columns[dept_index+1:]
+        cleaned_df = cleaned_df.select(*new_columns)
+    
+    logger.info(f"Generated {len(department_mapping)} unique department IDs")
+    
+    # Log the department mappings for reference
+    for dept_name, dept_id in department_mapping:
+        logger.info(f"Department '{dept_name}' -> ID {dept_id}")
+    
+    return cleaned_df
+
 def identify_data_type(df: DataFrame) -> Optional[str]:
     cols = set(df.columns)
     for dtype, schema in SCHEMAS.items():
@@ -147,13 +187,19 @@ def write_batch_output(dfs_with_metadata: List[Tuple[DataFrame, str, List[str]]]
     output_path = f"{output_base}/{data_type}/dt={timestamp}/"
     
     if len(dfs_with_metadata) == 1:
-        # Single file - write directly
+        # Single file - write directly (apply cleaning if needed)
         df, _, _ = dfs_with_metadata[0]
+        if data_type == "product_data":
+            df = clean_product_data(df)
         df.write.mode("overwrite").parquet(output_path)
     else:
         # Multiple files - union them with source tracking
         combined_dfs = []
         for df, source_file, _ in dfs_with_metadata:
+            # Apply cleaning if this is product data
+            if data_type == "product_data":
+                df = clean_product_data(df)
+            
             # Add source file column for traceability
             df_with_source = df.withColumn("source_file", lit(source_file))
             combined_dfs.append(df_with_source)
@@ -292,7 +338,7 @@ def process_file_batch(spark, file_paths: List[str], output_base: str,
         
         for data_type, dfs_with_metadata in data_type_groups.items():
             try:
-                # Write batch output
+                # Write batch output (cleaning will be applied inside write_batch_output)
                 output_path = write_batch_output(dfs_with_metadata, data_type, output_base)
                 
                 # Collect file paths for archiving and manifest update
@@ -400,7 +446,9 @@ def main():
     hadoop_conf.set("fs.s3a.aws.credentials.provider", "com.amazonaws.auth.DefaultAWSCredentialsProviderChain")
     hadoop_conf.set("fs.s3a.path.style.access", "true")
     hadoop_conf.set("fs.s3a.connection.ssl.enabled", "true")
-    hadoop_conf.set("fs.s3a.endpoint", "s3.amazonaws.com")
+    hadoop_conf.set("fs.s3a.endpoint", "s3.amazonaws.com")  # override if using VPC/custom/localstack
+    
+
 
     glue_context = GlueContext(sc)
     spark = glue_context.spark_session
