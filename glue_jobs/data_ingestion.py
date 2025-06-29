@@ -449,10 +449,9 @@ def main():
     )
 
     # Log summary
-    total_files = __builtins__.sum(result.get('total_files', 0) for result in batch_results)
-    successful_files = __builtins__.sum(result.get('successful_files', 0) for result in batch_results)
-    failed_files = __builtins__.sum(result.get('failed_files', 0) for result in batch_results)
-
+    total_files = sum(result.get('total_files', 0) for result in batch_results)
+    successful_files = sum(result.get('successful_files', 0) for result in batch_results)
+    failed_files = sum(result.get('failed_files', 0) for result in batch_results)
 
     logger.info(f"Batch processing completed:")
     logger.info(f"  Total files: {total_files}")
