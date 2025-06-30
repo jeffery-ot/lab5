@@ -8,14 +8,14 @@ on:
       - dev
   push:
     branches:
-      - prod
+      - main
   workflow_dispatch:
 
 jobs:
   deploy-and-run-production:
     name: Deploy State Machine and Run Production Pipeline
     runs-on: ubuntu-latest
-    # Only run if the dev workflow completed successfullyy
+    # Only run if the dev workflow completed successfully
     if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
     steps:
       - name: Checkout code
@@ -78,14 +78,20 @@ jobs:
           
           echo "Using state machine definition from: $YAML_FILE"
           
-          # Convert YAML to JSON for AWS CLI
-          python3 -c "
+          # Create Python script to convert YAML to JSON
+          cat > convert_yaml.py << 'EOF'
 import yaml
 import json
 import sys
+import os
+
+yaml_file = os.environ.get('YAML_FILE')
+if not yaml_file:
+    print("YAML_FILE environment variable not set")
+    sys.exit(1)
 
 try:
-    with open('$YAML_FILE', 'r') as f:
+    with open(yaml_file, 'r') as f:
         yaml_content = yaml.safe_load(f)
     
     # Extract the state machine definition
@@ -105,7 +111,10 @@ try:
 except Exception as e:
     print(f'Error converting YAML to JSON: {e}')
     sys.exit(1)
-          "
+EOF
+          
+          # Run the conversion
+          YAML_FILE="$YAML_FILE" python3 convert_yaml.py
           
           STATE_MACHINE_ARN="arn:aws:states:us-east-1:648637468459:stateMachine:lab4StateMachine-7c9ee5dd"
           ROLE_ARN="arn:aws:iam::648637468459:role/lab1-gluerole"
