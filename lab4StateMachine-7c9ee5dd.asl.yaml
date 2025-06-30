@@ -1,0 +1,283 @@
+Comment: >-
+  Robust EMR + Glue + Athena pipeline with dynamic EMR cluster creation and
+  termination
+StartAt: CreateCluster
+States:
+  CreateCluster:
+    Type: Task
+    Resource: arn:aws:states:::elasticmapreduce:createCluster.sync
+    Parameters:
+      Name: lab-emr-cluster
+      ReleaseLabel: emr-7.9.0
+      Applications:
+        - Name: Hadoop
+        - Name: Spark
+        - Name: Hive
+        - Name: JupyterEnterpriseGateway
+        - Name: Livy
+      Instances:
+        InstanceGroups:
+          - Name: Master nodes
+            InstanceCount: 1
+            InstanceRole: MASTER
+            InstanceType: m5.xlarge
+          - Name: Core nodes
+            InstanceCount: 1
+            InstanceRole: CORE
+            InstanceType: m5.xlarge
+        KeepJobFlowAliveWhenNoSteps: true
+        TerminationProtected: false
+        Ec2SubnetId: subnet-03051a44f70c50961
+      VisibleToAllUsers: true
+      JobFlowRole: EMR_EC2_DefaultRole
+      ServiceRole: EMR_DefaultRole
+      LogUri: s3://aws-logs-648637468459-us-east-1/elasticmapreduce/
+    ResultPath: $.Cluster
+    Retry:
+      - ErrorEquals:
+          - States.ALL
+        IntervalSeconds: 10
+        MaxAttempts: 3
+        BackoffRate: 2
+    Catch:
+      - ErrorEquals:
+          - States.ALL
+        Next: Fail
+    Next: EMRExtraction
+  EMRExtraction:
+    Type: Task
+    Resource: arn:aws:states:::elasticmapreduce:addStep.sync
+    Parameters:
+      ClusterId.$: $.Cluster.ClusterId
+      Step:
+        Name: Extraction
+        ActionOnFailure: CONTINUE
+        HadoopJarStep:
+          Jar: command-runner.jar
+          Args:
+            - spark-submit
+            - '--deploy-mode'
+            - cluster
+            - s3://lab4-scripts/extraction.py
+    ResultPath: null
+    Retry:
+      - ErrorEquals:
+          - States.ALL
+        IntervalSeconds: 15
+        MaxAttempts: 3
+        BackoffRate: 2
+    Catch:
+      - ErrorEquals:
+          - States.ALL
+        Next: TerminateCluster
+    Next: EMRTransformation
+  EMRTransformation:
+    Type: Task
+    Resource: arn:aws:states:::elasticmapreduce:addStep.sync
+    Parameters:
+      ClusterId.$: $.Cluster.ClusterId
+      Step:
+        Name: Transformation
+        ActionOnFailure: CONTINUE
+        HadoopJarStep:
+          Jar: command-runner.jar
+          Args:
+            - spark-submit
+            - '--deploy-mode'
+            - cluster
+            - s3://lab4-scripts/transformation.py
+    ResultPath: null
+    Retry:
+      - ErrorEquals:
+          - States.ALL
+        IntervalSeconds: 15
+        MaxAttempts: 3
+        BackoffRate: 2
+    Catch:
+      - ErrorEquals:
+          - States.ALL
+        Next: TerminateCluster
+    Next: EMRSparkJob1
+  EMRSparkJob1:
+    Type: Task
+    Resource: arn:aws:states:::elasticmapreduce:addStep.sync
+    Parameters:
+      ClusterId.$: $.Cluster.ClusterId
+      Step:
+        Name: SparkJob1
+        ActionOnFailure: CONTINUE
+        HadoopJarStep:
+          Jar: command-runner.jar
+          Args:
+            - spark-submit
+            - '--deploy-mode'
+            - cluster
+            - s3://lab4-scripts/spark_job_1.py
+    ResultPath: null
+    Retry:
+      - ErrorEquals:
+          - States.ALL
+        IntervalSeconds: 15
+        MaxAttempts: 3
+        BackoffRate: 2
+    Catch:
+      - ErrorEquals:
+          - States.ALL
+        Next: TerminateCluster
+    Next: EMRSparkJob2
+  EMRSparkJob2:
+    Type: Task
+    Resource: arn:aws:states:::elasticmapreduce:addStep.sync
+    Parameters:
+      ClusterId.$: $.Cluster.ClusterId
+      Step:
+        Name: SparkJob2
+        ActionOnFailure: CONTINUE
+        HadoopJarStep:
+          Jar: command-runner.jar
+          Args:
+            - spark-submit
+            - '--deploy-mode'
+            - cluster
+            - s3://lab4-scripts/spark_job_2.py
+    ResultPath: null
+    Retry:
+      - ErrorEquals:
+          - States.ALL
+        IntervalSeconds: 15
+        MaxAttempts: 3
+        BackoffRate: 2
+    Catch:
+      - ErrorEquals:
+          - States.ALL
+        Next: TerminateCluster
+    Next: StartCrawler
+  StartCrawler:
+    Type: Task
+    Resource: arn:aws:states:::aws-sdk:glue:startCrawler
+    Parameters:
+      Name: lab4-presentation-data_crawler
+    ResultPath: null
+    Retry:
+      - ErrorEquals:
+          - States.ALL
+        IntervalSeconds: 10
+        MaxAttempts: 3
+        BackoffRate: 2
+    Catch:
+      - ErrorEquals:
+          - States.ALL
+        Next: TerminateCluster
+    Next: WaitForCrawler
+  WaitForCrawler:
+    Type: Wait
+    Seconds: 30
+    Next: CheckCrawlerStatus
+  CheckCrawlerStatus:
+    Type: Task
+    Resource: arn:aws:states:::aws-sdk:glue:getCrawler
+    Parameters:
+      Name: lab4-presentation-data_crawler
+    ResultPath: $.CrawlerStatus
+    Retry:
+      - ErrorEquals:
+          - States.ALL
+        IntervalSeconds: 10
+        MaxAttempts: 5
+        BackoffRate: 2
+    Catch:
+      - ErrorEquals:
+          - States.ALL
+        Next: TerminateCluster
+    Next: IsCrawlerRunning
+  IsCrawlerRunning:
+    Type: Choice
+    Choices:
+      - Variable: $.CrawlerStatus.Crawler.State
+        StringEquals: RUNNING
+        Next: WaitForCrawler
+      - Variable: $.CrawlerStatus.Crawler.State
+        StringEquals: STOPPING
+        Next: WaitForCrawler
+    Default: ParallelAthenaQueries
+  ParallelAthenaQueries:
+    Type: Parallel
+    Branches:
+      - StartAt: AthenaTotalDailyTransactions
+        States:
+          AthenaTotalDailyTransactions:
+            Type: Task
+            Resource: arn:aws:states:::athena:startQueryExecution.sync
+            Parameters:
+              QueryString: >-
+                SELECT date(rental_end_time) AS rental_date, COUNT(*) AS
+                total_transactions, SUM(CAST(total_amount AS DECIMAL(15,2))) AS
+                revenue_per_day FROM
+                car_rental_marketplace_db.user_and_transaction_analysis GROUP BY
+                date(rental_end_time) ORDER BY rental_date DESC
+              WorkGroup: primary
+              ResultConfiguration:
+                OutputLocation: s3://lab4-athena-queries/results/
+            Next: AthenaAverageTransactionValue
+          AthenaAverageTransactionValue:
+            Type: Task
+            Resource: arn:aws:states:::athena:startQueryExecution.sync
+            Parameters:
+              QueryString: >-
+                SELECT AVG(total_amount) AS overall_avg_transaction_value,
+                SUM(total_amount) AS total_revenue_all_transactions, COUNT(*) AS
+                total_transactions_count FROM
+                car_rental_marketplace_db.user_and_transaction_analysis;
+              WorkGroup: primary
+              ResultConfiguration:
+                OutputLocation: s3://lab4-athena-queries/results/
+            Next: AthenaUserEngagementMetrics
+          AthenaUserEngagementMetrics:
+            Type: Task
+            Resource: arn:aws:states:::athena:startQueryExecution.sync
+            Parameters:
+              QueryString: >-
+                SELECT user_id, COUNT(*) AS total_transactions,
+                SUM(CAST(total_amount AS DECIMAL(15,2))) AS total_revenue FROM
+                car_rental_marketplace_db.user_and_transaction_analysis GROUP BY
+                user_id ORDER BY total_revenue DESC;
+              WorkGroup: primary
+              ResultConfiguration:
+                OutputLocation: s3://lab4-athena-queries/results/
+            Next: AthenaMaxMinSpendingPerUser
+          AthenaMaxMinSpendingPerUser:
+            Type: Task
+            Resource: arn:aws:states:::athena:startQueryExecution.sync
+            Parameters:
+              QueryString: >-
+                SELECT user_id, MAX(CAST(total_amount AS DECIMAL(15,2))) AS
+                max_spending, MIN(CAST(total_amount AS DECIMAL(15,2))) AS
+                min_spending FROM
+                car_rental_marketplace_db.user_and_transaction_analysis GROUP BY
+                user_id ORDER BY max_spending DESC;
+              WorkGroup: primary
+              ResultConfiguration:
+                OutputLocation: s3://lab4-athena-queries/results/
+            End: true
+    ResultPath: $.AthenaResults
+    Next: TerminateCluster
+  TerminateCluster:
+    Type: Task
+    Resource: arn:aws:states:::elasticmapreduce:terminateCluster
+    Parameters:
+      ClusterId.$: $.Cluster.ClusterId
+    Retry:
+      - ErrorEquals:
+          - States.ALL
+        IntervalSeconds: 10
+        MaxAttempts: 3
+        BackoffRate: 2
+    Catch:
+      - ErrorEquals:
+          - States.ALL
+        Next: Fail
+    Next: Success
+  Success:
+    Type: Succeed
+  Fail:
+    Type: Fail
