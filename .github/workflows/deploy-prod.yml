@@ -33,14 +33,14 @@ jobs:
         id: check_state_machine
         run: |
           STATE_MACHINE_ARN="arn:aws:states:us-east-1:648637468459:stateMachine:MyStateMachine-22a18e33"
-          
+
           if aws stepfunctions describe-state-machine --state-machine-arn "$STATE_MACHINE_ARN" 2>/dev/null; then
             echo "State machine exists"
             echo "exists=true" >> $GITHUB_OUTPUT
-            
+
             CURRENT_ROLE=$(aws stepfunctions describe-state-machine --state-machine-arn "$STATE_MACHINE_ARN" --query 'roleArn' --output text)
             EXPECTED_ROLE="arn:aws:iam::648637468459:role/service-role/StepFunctions-MyStateMachine-22a18e33-role-rvcqj4u7h"
-            
+
             if [ "$CURRENT_ROLE" = "$EXPECTED_ROLE" ]; then
               echo "correct_role=true" >> $GITHUB_OUTPUT
             else
@@ -51,11 +51,9 @@ jobs:
             echo "correct_role=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Create or update State Machine from YAML
-        if: steps.check_state_machine.outputs.exists == 'false' || steps.check_state_machine.outputs.correct_role == 'false'
+      - name: Find YAML definition file
+        id: find_yaml
         run: |
-          echo "Creating or updating state machine..."
-
           YAML_FILE=""
           for f in state-machine-definition.yaml statemachine.yaml lab4StateMachine.yaml; do
             if [ -f "$f" ]; then
@@ -69,20 +67,33 @@ jobs:
             exit 1
           fi
 
-          echo "Using $YAML_FILE to create state machine JSON..."
-          python3 <<EOF
+          echo "yaml_file=$YAML_FILE" >> $GITHUB_OUTPUT
+
+      - name: Convert YAML to JSON definition
+        if: steps.check_state_machine.outputs.exists == 'false' || steps.check_state_machine.outputs.correct_role == 'false'
+        run: |
+          YAML_FILE="${{ steps.find_yaml.outputs.yaml_file }}"
+
+          echo '
 import yaml
 import json
+import sys
 
-with open("$YAML_FILE", "r") as f:
+yaml_file = sys.argv[1]
+with open(yaml_file, "r") as f:
     data = yaml.safe_load(f)
 
 definition = data.get("definition") or data.get("StateMachine") or data
 
 with open("state-machine-definition.json", "w") as f:
     json.dump(definition, f, indent=2)
-EOF
+' > convert_yaml_to_json.py
 
+          python3 convert_yaml_to_json.py "$YAML_FILE"
+
+      - name: Create or update State Machine
+        if: steps.check_state_machine.outputs.exists == 'false' || steps.check_state_machine.outputs.correct_role == 'false'
+        run: |
           STATE_MACHINE_ARN="arn:aws:states:us-east-1:648637468459:stateMachine:MyStateMachine-22a18e33"
           ROLE_ARN="arn:aws:iam::648637468459:role/service-role/StepFunctions-MyStateMachine-22a18e33-role-rvcqj4u7h"
 
