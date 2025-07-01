@@ -48,10 +48,10 @@ jobs:
       - name: Debug AWS identity inside container
         run: docker compose exec glue_pyspark aws sts get-caller-identity
       
-      # Test Glue jobs locally first
+      Test Glue jobs locally first
 
-      # - name: Test Glue job - file_renamer_uploader.py
-      #   run: docker compose exec glue_pyspark spark-submit /home/glue_user/workspace/glue_jobs/file_renamer_uploader.py
+      - name: Test Glue job - file_renamer_uploader.py
+        run: docker compose exec glue_pyspark spark-submit /home/glue_user/workspace/glue_jobs/file_renamer_uploader.py
 
       - name: Test Glue job - data_ingestion.py
         run: docker compose exec glue_pyspark spark-submit /home/glue_user/workspace/glue_jobs/data_ingestion.py
@@ -63,105 +63,105 @@ jobs:
         if: always()
         run: docker compose -f docker-compose.yml down --volumes
       
-      # # Deploy to AWS Glue after successful testing
-      # - name: Upload Glue job scripts to S3
-      #   run: |
-      #     aws s3 cp glue_jobs/data_ingestion.py s3://lab5-gluejobs/scripts/data_ingestion.py
-      #     aws s3 cp glue_jobs/data_transformation.py s3://lab5-gluejobs/scripts/data_transformation.py
+      # Deploy to AWS Glue after successful testing
+      - name: Upload Glue job scripts to S3
+        run: |
+          aws s3 cp glue_jobs/data_ingestion.py s3://lab5-gluejobs/scripts/data_ingestion.py
+          aws s3 cp glue_jobs/data_transformation.py s3://lab5-gluejobs/scripts/data_transformation.py
       
-      # - name: Create or update data_ingestion Glue job
-      #   run: |
-      #     # Check if job exists
-      #     if aws glue get-job --job-name data_ingestion 2>/dev/null; then
-      #       echo "Updating existing data_ingestion job..."
-      #       aws glue update-job \
-      #         --job-name data_ingestion \
-      #         --job-update '{
-      #           "Role": "arn:aws:iam::648637468459:role/lab1-gluerole",
-      #           "Command": {
-      #             "Name": "glueetl",
-      #             "ScriptLocation": "s3://lab5-gluejobs/scripts/data_ingestion.py",
-      #             "PythonVersion": "3"
-      #           },
-      #           "DefaultArguments": {
-      #             "--TempDir": "s3://lab5-gluejobs/temp/",
-      #             "--job-bookmark-option": "job-bookmark-enable",
-      #             "--enable-metrics": "",
-      #             "--enable-continuous-cloudwatch-log": "true"
-      #           },
-      #           "MaxRetries": 0,
-      #           "Timeout": 2880,
-      #           "GlueVersion": "4.0",
-      #           "WorkerType": "G.1X",
-      #           "NumberOfWorkers": 2
-      #         }'
-      #     else
-      #       echo "Creating new data_ingestion job..."
-      #       aws glue create-job \
-      #         --name data_ingestion \
-      #         --role "arn:aws:iam::648637468459:role/lab1-gluerole" \
-      #         --command Name=glueetl,ScriptLocation=s3://lab5-gluejobs/scripts/data_ingestion.py,PythonVersion=3 \
-      #         --default-arguments '{
-      #           "--TempDir": "s3://lab5-gluejobs/temp/",
-      #           "--job-bookmark-option": "job-bookmark-enable",
-      #           "--enable-metrics": "",
-      #           "--enable-continuous-cloudwatch-log": "true"
-      #         }' \
-      #         --max-retries 0 \
-      #         --timeout 2880 \
-      #         --glue-version "4.0" \
-      #         --worker-type G.1X \
-      #         --number-of-workers 2
-      #     fi
+      - name: Create or update data_ingestion Glue job
+        run: |
+          # Check if job exists
+          if aws glue get-job --job-name data_ingestion 2>/dev/null; then
+            echo "Updating existing data_ingestion job..."
+            aws glue update-job \
+              --job-name data_ingestion \
+              --job-update '{
+                "Role": "arn:aws:iam::648637468459:role/lab1-gluerole",
+                "Command": {
+                  "Name": "glueetl",
+                  "ScriptLocation": "s3://lab5-gluejobs/scripts/data_ingestion.py",
+                  "PythonVersion": "3"
+                },
+                "DefaultArguments": {
+                  "--TempDir": "s3://lab5-gluejobs/temp/",
+                  "--job-bookmark-option": "job-bookmark-enable",
+                  "--enable-metrics": "",
+                  "--enable-continuous-cloudwatch-log": "true"
+                },
+                "MaxRetries": 0,
+                "Timeout": 2880,
+                "GlueVersion": "4.0",
+                "WorkerType": "G.1X",
+                "NumberOfWorkers": 2
+              }'
+          else
+            echo "Creating new data_ingestion job..."
+            aws glue create-job \
+              --name data_ingestion \
+              --role "arn:aws:iam::648637468459:role/lab1-gluerole" \
+              --command Name=glueetl,ScriptLocation=s3://lab5-gluejobs/scripts/data_ingestion.py,PythonVersion=3 \
+              --default-arguments '{
+                "--TempDir": "s3://lab5-gluejobs/temp/",
+                "--job-bookmark-option": "job-bookmark-enable",
+                "--enable-metrics": "",
+                "--enable-continuous-cloudwatch-log": "true"
+              }' \
+              --max-retries 0 \
+              --timeout 2880 \
+              --glue-version "4.0" \
+              --worker-type G.1X \
+              --number-of-workers 2
+          fi
       
-      # - name: Create or update data_transformation Glue job
-      #   run: |
-      #     # Check if job exists
-      #     if aws glue get-job --job-name data_transformation 2>/dev/null; then
-      #       echo "Updating existing data_transformation job..."
-      #       aws glue update-job \
-      #         --job-name data_transformation \
-      #         --job-update '{
-      #           "Role": "arn:aws:iam::648637468459:role/lab1-gluerole",
-      #           "Command": {
-      #             "Name": "glueetl",
-      #             "ScriptLocation": "s3://lab5-gluejobs/scripts/data_transformation.py",
-      #             "PythonVersion": "3"
-      #           },
-      #           "DefaultArguments": {
-      #             "--TempDir": "s3://lab5-gluejobs/temp/",
-      #             "--job-bookmark-option": "job-bookmark-enable",
-      #             "--enable-metrics": "",
-      #             "--enable-continuous-cloudwatch-log": "true"
-      #           },
-      #           "MaxRetries": 0,
-      #           "Timeout": 2880,
-      #           "GlueVersion": "4.0",
-      #           "WorkerType": "G.1X",
-      #           "NumberOfWorkers": 2
-      #         }'
-      #     else
-      #       echo "Creating new data_transformation job..."
-      #       aws glue create-job \
-      #         --name data_transformation \
-      #         --role "arn:aws:iam::648637468459:role/lab1-gluerole" \
-      #         --command Name=glueetl,ScriptLocation=s3://lab5-gluejobs/scripts/data_transformation.py,PythonVersion=3 \
-      #         --default-arguments '{
-      #           "--TempDir": "s3://lab5-gluejobs/temp/",
-      #           "--job-bookmark-option": "job-bookmark-enable",
-      #           "--enable-metrics": "",
-      #           "--enable-continuous-cloudwatch-log": "true"
-      #         }' \
-      #         --max-retries 0 \
-      #         --timeout 2880 \
-      #         --glue-version "4.0" \
-      #         --worker-type G.1X \
-      #         --number-of-workers 2
-      #     fi
+      - name: Create or update data_transformation Glue job
+        run: |
+          # Check if job exists
+          if aws glue get-job --job-name data_transformation 2>/dev/null; then
+            echo "Updating existing data_transformation job..."
+            aws glue update-job \
+              --job-name data_transformation \
+              --job-update '{
+                "Role": "arn:aws:iam::648637468459:role/lab1-gluerole",
+                "Command": {
+                  "Name": "glueetl",
+                  "ScriptLocation": "s3://lab5-gluejobs/scripts/data_transformation.py",
+                  "PythonVersion": "3"
+                },
+                "DefaultArguments": {
+                  "--TempDir": "s3://lab5-gluejobs/temp/",
+                  "--job-bookmark-option": "job-bookmark-enable",
+                  "--enable-metrics": "",
+                  "--enable-continuous-cloudwatch-log": "true"
+                },
+                "MaxRetries": 0,
+                "Timeout": 2880,
+                "GlueVersion": "4.0",
+                "WorkerType": "G.1X",
+                "NumberOfWorkers": 2
+              }'
+          else
+            echo "Creating new data_transformation job..."
+            aws glue create-job \
+              --name data_transformation \
+              --role "arn:aws:iam::648637468459:role/lab1-gluerole" \
+              --command Name=glueetl,ScriptLocation=s3://lab5-gluejobs/scripts/data_transformation.py,PythonVersion=3 \
+              --default-arguments '{
+                "--TempDir": "s3://lab5-gluejobs/temp/",
+                "--job-bookmark-option": "job-bookmark-enable",
+                "--enable-metrics": "",
+                "--enable-continuous-cloudwatch-log": "true"
+              }' \
+              --max-retries 0 \
+              --timeout 2880 \
+              --glue-version "4.0" \
+              --worker-type G.1X \
+              --number-of-workers 2
+          fi
       
-      # - name: Verify job deployment
-      #   run: |
-      #     echo "Verifying deployed jobs..."
-      #     aws glue get-job --job-name data_ingestion --query 'Job.Name'
-      #     aws glue get-job --job-name data_transformation --query 'Job.Name'
-      #     echo "Jobs deployed successfully!"
+      - name: Verify job deployment
+        run: |
+          echo "Verifying deployed jobs..."
+          aws glue get-job --job-name data_ingestion --query 'Job.Name'
+          aws glue get-job --job-name data_transformation --query 'Job.Name'
+          echo "Jobs deployed successfully!"

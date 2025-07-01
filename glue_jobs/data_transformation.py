@@ -530,6 +530,7 @@ def transform_orders(spark) -> DataFrame:
         CAST(order_id AS INTEGER) as order_id,
         CAST(user_id AS INTEGER) as user_id,
         CAST(order_timestamp AS TIMESTAMP) as order_timestamp,
+        DATE_FORMAT(CAST(order_timestamp AS TIMESTAMP), 'yyyy-MM-dd') AS order_date, -- Add this line
         CAST(total_amount AS DECIMAL(10,2)) as total_amount
     FROM raw_orders
     WHERE order_id IS NOT NULL
