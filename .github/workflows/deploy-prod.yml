@@ -1,189 +1,189 @@
-name: production_pipeline_deployment
-on:
-  workflow_run:
-    workflows: ["data_pipeline_development"]
-    types:
-      - completed
-    branches:
-      - dev
-  push:
-    branches:
-      - prod
-  workflow_dispatch:
+# name: production_pipeline_deployment
+# on:
+#   workflow_run:
+#     workflows: ["data_pipeline_development"]
+#     types:
+#       - completed
+#     branches:
+#       - dev
+#   push:
+#     branches:
+#       - prod
+#   workflow_dispatch:
 
-jobs:
-  deploy-and-run-production:
-    name: Deploy State Machine and Run Production Pipeline
-    runs-on: ubuntu-latest
-    # Only run if the dev workflow completed successfully
-    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+# jobs:
+#   deploy-and-run-production:
+#     name: Deploy State Machine and Run Production Pipeline
+#     runs-on: ubuntu-latest
+#     # Only run if the dev workflow completed successfully
+#     if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v4
       
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_DEFAULT_REGION }}
+#       - name: Configure AWS credentials
+#         uses: aws-actions/configure-aws-credentials@v4
+#         with:
+#           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+#           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+#           aws-region: ${{ secrets.AWS_DEFAULT_REGION }}
       
-      - name: Check if State Machine exists
-        id: check_state_machine
-        run: |
-          STATE_MACHINE_ARN="arn:aws:states:us-east-1:648637468459:stateMachine:lab4StateMachine-7c9ee5dd"
+#       - name: Check if State Machine exists
+#         id: check_state_machine
+#         run: |
+#           STATE_MACHINE_ARN="arn:aws:states:us-east-1:648637468459:stateMachine:lab4StateMachine-7c9ee5dd"
           
-          if aws stepfunctions describe-state-machine --state-machine-arn "$STATE_MACHINE_ARN" 2>/dev/null; then
-            echo "State machine exists"
-            echo "exists=true" >> $GITHUB_OUTPUT
+#           if aws stepfunctions describe-state-machine --state-machine-arn "$STATE_MACHINE_ARN" 2>/dev/null; then
+#             echo "State machine exists"
+#             echo "exists=true" >> $GITHUB_OUTPUT
             
-            # Check if it has the correct role
-            CURRENT_ROLE=$(aws stepfunctions describe-state-machine --state-machine-arn "$STATE_MACHINE_ARN" --query 'roleArn' --output text)
-            EXPECTED_ROLE="arn:aws:iam::648637468459:role/lab1-gluerole"
+#             # Check if it has the correct role
+#             CURRENT_ROLE=$(aws stepfunctions describe-state-machine --state-machine-arn "$STATE_MACHINE_ARN" --query 'roleArn' --output text)
+#             EXPECTED_ROLE="arn:aws:iam::648637468459:role/lab1-gluerole"
             
-            if [ "$CURRENT_ROLE" = "$EXPECTED_ROLE" ]; then
-              echo "State machine has correct role"
-              echo "correct_role=true" >> $GITHUB_OUTPUT
-            else
-              echo "State machine has incorrect role: $CURRENT_ROLE"
-              echo "correct_role=false" >> $GITHUB_OUTPUT
-            fi
-          else
-            echo "State machine does not exist"
-            echo "exists=false" >> $GITHUB_OUTPUT
-            echo "correct_role=false" >> $GITHUB_OUTPUT
-          fi
+#             if [ "$CURRENT_ROLE" = "$EXPECTED_ROLE" ]; then
+#               echo "State machine has correct role"
+#               echo "correct_role=true" >> $GITHUB_OUTPUT
+#             else
+#               echo "State machine has incorrect role: $CURRENT_ROLE"
+#               echo "correct_role=false" >> $GITHUB_OUTPUT
+#             fi
+#           else
+#             echo "State machine does not exist"
+#             echo "exists=false" >> $GITHUB_OUTPUT
+#             echo "correct_role=false" >> $GITHUB_OUTPUT
+#           fi
       
-      - name: Create State Machine from YAML
-        if: steps.check_state_machine.outputs.exists == 'false' || steps.check_state_machine.outputs.correct_role == 'false'
-        run: |
-          echo "Creating or updating state machine..."
+#       - name: Create State Machine from YAML
+#         if: steps.check_state_machine.outputs.exists == 'false' || steps.check_state_machine.outputs.correct_role == 'false'
+#         run: |
+#           echo "Creating or updating state machine..."
           
-          # Check if state machine definition YAML file exists
-          if [ ! -f "state-machine-definition.yaml" ] && [ ! -f "statemachine.yaml" ] && [ ! -f "lab4StateMachine.yaml" ]; then
-            echo "Error: State machine YAML file not found. Please ensure the file exists in your project directory."
-            echo "Looking for: state-machine-definition.yaml, statemachine.yaml, or lab4StateMachine.yaml"
-            exit 1
-          fi
+#           # Check if state machine definition YAML file exists
+#           if [ ! -f "state-machine-definition.yaml" ] && [ ! -f "statemachine.yaml" ] && [ ! -f "lab4StateMachine.yaml" ]; then
+#             echo "Error: State machine YAML file not found. Please ensure the file exists in your project directory."
+#             echo "Looking for: state-machine-definition.yaml, statemachine.yaml, or lab4StateMachine.yaml"
+#             exit 1
+#           fi
           
-          # Find the YAML file (adjust the filename as needed)
-          YAML_FILE=""
-          if [ -f "state-machine-definition.yaml" ]; then
-            YAML_FILE="state-machine-definition.yaml"
-          elif [ -f "statemachine.yaml" ]; then
-            YAML_FILE="statemachine.yaml"
-          elif [ -f "lab4StateMachine.yaml" ]; then
-            YAML_FILE="lab4StateMachine.yaml"
-          fi
+#           # Find the YAML file (adjust the filename as needed)
+#           YAML_FILE=""
+#           if [ -f "state-machine-definition.yaml" ]; then
+#             YAML_FILE="state-machine-definition.yaml"
+#           elif [ -f "statemachine.yaml" ]; then
+#             YAML_FILE="statemachine.yaml"
+#           elif [ -f "lab4StateMachine.yaml" ]; then
+#             YAML_FILE="lab4StateMachine.yaml"
+#           fi
           
-          echo "Using state machine definition from: $YAML_FILE"
+#           echo "Using state machine definition from: $YAML_FILE"
           
-          # Convert YAML to JSON for AWS CLI
-          python3 -c "
-import yaml
-import json
-import sys
+#           # Convert YAML to JSON for AWS CLI
+#           python3 -c "
+# import yaml
+# import json
+# import sys
 
-try:
-    with open('$YAML_FILE', 'r') as f:
-        yaml_content = yaml.safe_load(f)
+# try:
+#     with open('$YAML_FILE', 'r') as f:
+#         yaml_content = yaml.safe_load(f)
     
-    # Extract the state machine definition
-    if 'definition' in yaml_content:
-        definition = yaml_content['definition']
-    elif 'StateMachine' in yaml_content:
-        definition = yaml_content['StateMachine']
-    else:
-        definition = yaml_content
+#     # Extract the state machine definition
+#     if 'definition' in yaml_content:
+#         definition = yaml_content['definition']
+#     elif 'StateMachine' in yaml_content:
+#         definition = yaml_content['StateMachine']
+#     else:
+#         definition = yaml_content
     
-    # Write definition to JSON file
-    with open('state-machine-definition.json', 'w') as f:
-        json.dump(definition, f, indent=2)
+#     # Write definition to JSON file
+#     with open('state-machine-definition.json', 'w') as f:
+#         json.dump(definition, f, indent=2)
     
-    print('Successfully converted YAML to JSON')
+#     print('Successfully converted YAML to JSON')
     
-except Exception as e:
-    print(f'Error converting YAML to JSON: {e}')
-    sys.exit(1)
-          "
+# except Exception as e:
+#     print(f'Error converting YAML to JSON: {e}')
+#     sys.exit(1)
+#           "
           
-          STATE_MACHINE_ARN="arn:aws:states:us-east-1:648637468459:stateMachine:lab4StateMachine-7c9ee5dd"
-          ROLE_ARN="arn:aws:iam::648637468459:role/lab1-gluerole"
+#           STATE_MACHINE_ARN="arn:aws:states:us-east-1:648637468459:stateMachine:lab4StateMachine-7c9ee5dd"
+#           ROLE_ARN="arn:aws:iam::648637468459:role/lab1-gluerole"
           
-          if [ "${{ steps.check_state_machine.outputs.exists }}" = "false" ]; then
-            echo "Creating new state machine..."
-            aws stepfunctions create-state-machine \
-              --name "lab4StateMachine-7c9ee5dd" \
-              --definition file://state-machine-definition.json \
-              --role-arn "$ROLE_ARN" \
-              --type "STANDARD"
-          else
-            echo "Updating existing state machine with correct role..."
-            aws stepfunctions update-state-machine \
-              --state-machine-arn "$STATE_MACHINE_ARN" \
-              --definition file://state-machine-definition.json \
-              --role-arn "$ROLE_ARN"
-          fi
+#           if [ "${{ steps.check_state_machine.outputs.exists }}" = "false" ]; then
+#             echo "Creating new state machine..."
+#             aws stepfunctions create-state-machine \
+#               --name "lab4StateMachine-7c9ee5dd" \
+#               --definition file://state-machine-definition.json \
+#               --role-arn "$ROLE_ARN" \
+#               --type "STANDARD"
+#           else
+#             echo "Updating existing state machine with correct role..."
+#             aws stepfunctions update-state-machine \
+#               --state-machine-arn "$STATE_MACHINE_ARN" \
+#               --definition file://state-machine-definition.json \
+#               --role-arn "$ROLE_ARN"
+#           fi
           
-          echo "State machine deployed successfully!"
+#           echo "State machine deployed successfully!"
       
-      - name: Verify State Machine deployment
-        run: |
-          STATE_MACHINE_ARN="arn:aws:states:us-east-1:648637468459:stateMachine:lab4StateMachine-7c9ee5dd"
+#       - name: Verify State Machine deployment
+#         run: |
+#           STATE_MACHINE_ARN="arn:aws:states:us-east-1:648637468459:stateMachine:lab4StateMachine-7c9ee5dd"
           
-          echo "Verifying state machine deployment..."
-          aws stepfunctions describe-state-machine --state-machine-arn "$STATE_MACHINE_ARN" --query '{Name: name, Status: status, RoleArn: roleArn}'
+#           echo "Verifying state machine deployment..."
+#           aws stepfunctions describe-state-machine --state-machine-arn "$STATE_MACHINE_ARN" --query '{Name: name, Status: status, RoleArn: roleArn}'
           
-          echo "State machine verification complete!"
+#           echo "State machine verification complete!"
       
-      - name: Create .env file for Docker Compose
-        run: |
-          echo "AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}" >> .env
-          echo "AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}" >> .env
-          echo "AWS_DEFAULT_REGION=${{ secrets.AWS_DEFAULT_REGION }}" >> .env
-          echo "WORKSPACE_LOCATION=${{ github.workspace }}" >> .env
+#       - name: Create .env file for Docker Compose
+#         run: |
+#           echo "AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}" >> .env
+#           echo "AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}" >> .env
+#           echo "AWS_DEFAULT_REGION=${{ secrets.AWS_DEFAULT_REGION }}" >> .env
+#           echo "WORKSPACE_LOCATION=${{ github.workspace }}" >> .env
       
-      - name: Start Glue PySpark container
-        run: docker compose -f docker-compose.yml up -d glue_pyspark
+#       - name: Start Glue PySpark container
+#         run: docker compose -f docker-compose.yml up -d glue_pyspark
       
-      - name: Wait for container healthcheck
-        run: |
-          echo "Waiting for container to become healthy..."
-          for i in {1..10}; do
-            status=$(docker inspect --format='{{json .State.Health.Status}}' $(docker ps -qf name=glue_pyspark))
-            if [ "$status" = "\"healthy\"" ]; then
-              echo "Container is healthy!"
-              break
-            fi
-            echo "Waiting... ($i)"
-            sleep 5
-          done
+#       - name: Wait for container healthcheck
+#         run: |
+#           echo "Waiting for container to become healthy..."
+#           for i in {1..10}; do
+#             status=$(docker inspect --format='{{json .State.Health.Status}}' $(docker ps -qf name=glue_pyspark))
+#             if [ "$status" = "\"healthy\"" ]; then
+#               echo "Container is healthy!"
+#               break
+#             fi
+#             echo "Waiting... ($i)"
+#             sleep 5
+#           done
       
-      - name: Install openpyxl in container
-        run: docker compose exec glue_pyspark pip install openpyxl
+#       - name: Install openpyxl in container
+#         run: docker compose exec glue_pyspark pip install openpyxl
       
-      - name: Debug AWS identity inside container
-        run: docker compose exec glue_pyspark aws sts get-caller-identity
+#       - name: Debug AWS identity inside container
+#         run: docker compose exec glue_pyspark aws sts get-caller-identity
       
-      - name: Trigger State Machine via file_renamer_uploader.py
-        run: |
-          echo "Running file_renamer_uploader.py to trigger the state machine..."
-          docker compose exec glue_pyspark spark-submit /home/glue_user/workspace/glue_jobs/file_renamer_uploader.py
+#       - name: Trigger State Machine via file_renamer_uploader.py
+#         run: |
+#           echo "Running file_renamer_uploader.py to trigger the state machine..."
+#           docker compose exec glue_pyspark spark-submit /home/glue_user/workspace/glue_jobs/file_renamer_uploader.py
           
-          echo "File renamer uploader job completed. This should have triggered the state machine."
+#           echo "File renamer uploader job completed. This should have triggered the state machine."
       
-      - name: Monitor State Machine execution (optional)
-        run: |
-          echo "Checking recent state machine executions..."
-          STATE_MACHINE_ARN="arn:aws:states:us-east-1:648637468459:stateMachine:lab4StateMachine-7c9ee5dd"
+#       - name: Monitor State Machine execution (optional)
+#         run: |
+#           echo "Checking recent state machine executions..."
+#           STATE_MACHINE_ARN="arn:aws:states:us-east-1:648637468459:stateMachine:lab4StateMachine-7c9ee5dd"
           
-          # List recent executions
-          aws stepfunctions list-executions \
-            --state-machine-arn "$STATE_MACHINE_ARN" \
-            --max-items 5 \
-            --query 'executions[*].{Name: name, Status: status, StartDate: startDate}' \
-            --output table
+#           # List recent executions
+#           aws stepfunctions list-executions \
+#             --state-machine-arn "$STATE_MACHINE_ARN" \
+#             --max-items 5 \
+#             --query 'executions[*].{Name: name, Status: status, StartDate: startDate}' \
+#             --output table
       
-      - name: Stop and clean up containers
-        if: always()
-        run: docker compose -f docker-compose.yml down --volumes
+#       - name: Stop and clean up containers
+#         if: always()
+#         run: docker compose -f docker-compose.yml down --volumes
