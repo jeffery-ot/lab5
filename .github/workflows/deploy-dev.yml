@@ -50,14 +50,14 @@ jobs:
       
       # Test Glue jobs locally first
 
-      - name: Test Glue job - file_renamer_uploader.py
-        run: docker compose exec glue_pyspark spark-submit /home/glue_user/workspace/glue_jobs/file_renamer_uploader.py
+      # - name: Test Glue job - file_renamer_uploader.py
+      #   run: docker compose exec glue_pyspark spark-submit /home/glue_user/workspace/glue_jobs/file_renamer_uploader.py
 
-      # - name: Test Glue job - data_ingestion.py
-      #   run: docker compose exec glue_pyspark spark-submit /home/glue_user/workspace/glue_jobs/data_ingestion.py
+      - name: Test Glue job - data_ingestion.py
+        run: docker compose exec glue_pyspark spark-submit /home/glue_user/workspace/glue_jobs/data_ingestion.py
       
-      # - name: Test Glue job - data_transformation.py
-      #   run: docker compose exec glue_pyspark spark-submit /home/glue_user/workspace/glue_jobs/data_transformation.py
+      - name: Test Glue job - data_transformation.py
+        run: docker compose exec glue_pyspark spark-submit /home/glue_user/workspace/glue_jobs/data_transformation.py
       
       - name: Stop and clean up containers
         if: always()
