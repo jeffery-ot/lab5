@@ -1,4 +1,5 @@
 name: data_pipeline_development
+
 on:
   push:
     branches:
@@ -8,27 +9,28 @@ jobs:
   test-glue-jobs:
     name: Test and Deploy Glue Jobs
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_DEFAULT_REGION }}
-      
+
       - name: Create .env file for Docker Compose
         run: |
           echo "AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}" >> .env
           echo "AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}" >> .env
           echo "AWS_DEFAULT_REGION=${{ secrets.AWS_DEFAULT_REGION }}" >> .env
           echo "WORKSPACE_LOCATION=${{ github.workspace }}" >> .env
-      
+
       - name: Start Glue PySpark container
         run: docker compose -f docker-compose.yml up -d glue_pyspark
-      
+
       - name: Wait for container healthcheck
         run: |
           echo "Waiting for container to become healthy..."
@@ -41,37 +43,33 @@ jobs:
             echo "Waiting... ($i)"
             sleep 5
           done
-      
+
       - name: Install openpyxl in container
         run: docker compose exec glue_pyspark pip install openpyxl
-      
+
       - name: Debug AWS identity inside container
         run: docker compose exec glue_pyspark aws sts get-caller-identity
-      
-      Test Glue jobs locally first
 
       - name: Test Glue job - file_renamer_uploader.py
         run: docker compose exec glue_pyspark spark-submit /home/glue_user/workspace/glue_jobs/file_renamer_uploader.py
 
       - name: Test Glue job - data_ingestion.py
         run: docker compose exec glue_pyspark spark-submit /home/glue_user/workspace/glue_jobs/data_ingestion.py
-      
+
       - name: Test Glue job - data_transformation.py
         run: docker compose exec glue_pyspark spark-submit /home/glue_user/workspace/glue_jobs/data_transformation.py
-      
+
       - name: Stop and clean up containers
         if: always()
         run: docker compose -f docker-compose.yml down --volumes
-      
-      # Deploy to AWS Glue after successful testing
+
       - name: Upload Glue job scripts to S3
         run: |
           aws s3 cp glue_jobs/data_ingestion.py s3://lab5-gluejobs/scripts/data_ingestion.py
           aws s3 cp glue_jobs/data_transformation.py s3://lab5-gluejobs/scripts/data_transformation.py
-      
+
       - name: Create or update data_ingestion Glue job
         run: |
-          # Check if job exists
           if aws glue get-job --job-name data_ingestion 2>/dev/null; then
             echo "Updating existing data_ingestion job..."
             aws glue update-job \
@@ -113,10 +111,9 @@ jobs:
               --worker-type G.1X \
               --number-of-workers 2
           fi
-      
+
       - name: Create or update data_transformation Glue job
         run: |
-          # Check if job exists
           if aws glue get-job --job-name data_transformation 2>/dev/null; then
             echo "Updating existing data_transformation job..."
             aws glue update-job \
@@ -158,7 +155,7 @@ jobs:
               --worker-type G.1X \
               --number-of-workers 2
           fi
-      
+
       - name: Verify job deployment
         run: |
           echo "Verifying deployed jobs..."
