@@ -16,10 +16,7 @@ jobs:
   deploy-and-run-production:
     name: Deploy State Machine and Run Production Pipeline
     runs-on: ubuntu-latest
-    if: >
-      github.event.workflow_run.conclusion == 'success' ||
-      github.event_name == 'push' ||
-      github.event_name == 'workflow_dispatch'
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
 
     steps:
       - name: Checkout code
@@ -35,13 +32,15 @@ jobs:
       - name: Check if State Machine exists
         id: check_state_machine
         run: |
-          set -e
           STATE_MACHINE_ARN="arn:aws:states:us-east-1:648637468459:stateMachine:MyStateMachine-22a18e33"
-
-          if aws stepfunctions describe-state-machine --state-machine-arn "$STATE_MACHINE_ARN" > /dev/null 2>&1; then
+          
+          if aws stepfunctions describe-state-machine --state-machine-arn "$STATE_MACHINE_ARN" 2>/dev/null; then
+            echo "State machine exists"
             echo "exists=true" >> $GITHUB_OUTPUT
+
             CURRENT_ROLE=$(aws stepfunctions describe-state-machine --state-machine-arn "$STATE_MACHINE_ARN" --query 'roleArn' --output text)
             EXPECTED_ROLE="arn:aws:iam::648637468459:role/service-role/StepFunctions-MyStateMachine-22a18e33-role-rvcqj4u7h"
+
             if [ "$CURRENT_ROLE" = "$EXPECTED_ROLE" ]; then
               echo "correct_role=true" >> $GITHUB_OUTPUT
             else
@@ -52,30 +51,30 @@ jobs:
             echo "correct_role=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Find YAML file
-        id: find_yaml
-        run: |
-          for f in state-machine-definition.yaml statemachine.yaml lab4StateMachine.yaml; do
-            if [ -f "$f" ]; then
-              echo "yaml_file=$f" >> $GITHUB_OUTPUT
-              exit 0
-            fi
-          done
-          echo "No YAML state machine definition file found."
-          exit 1
-
-      - name: Convert YAML to JSON definition
+      - name: Create or update State Machine from YAML
         if: steps.check_state_machine.outputs.exists == 'false' || steps.check_state_machine.outputs.correct_role == 'false'
         run: |
-          YAML_FILE="${{ steps.find_yaml.outputs.yaml_file }}"
+          echo "Creating or updating state machine..."
 
-          cat <<EOF > convert_yaml_to_json.py
+          YAML_FILE=""
+          for f in state-machine-definition.yaml statemachine.yaml lab4StateMachine.yaml; do
+            if [ -f "$f" ]; then
+              YAML_FILE="$f"
+              break
+            fi
+          done
+
+          if [ -z "$YAML_FILE" ]; then
+            echo "No YAML file found for state machine definition."
+            exit 1
+          fi
+
+          echo "Using $YAML_FILE to create state machine JSON..."
+          python3 <<EOF
 import yaml
 import json
-import sys
 
-yaml_file = sys.argv[1]
-with open(yaml_file, "r") as f:
+with open("$YAML_FILE", "r") as f:
     data = yaml.safe_load(f)
 
 definition = data.get("definition") or data.get("StateMachine") or data
@@ -84,24 +83,16 @@ with open("state-machine-definition.json", "w") as f:
     json.dump(definition, f, indent=2)
 EOF
 
-          python3 convert_yaml_to_json.py "$YAML_FILE"
-
-      - name: Create or Update State Machine
-        if: steps.check_state_machine.outputs.exists == 'false' || steps.check_state_machine.outputs.correct_role == 'false'
-        run: |
-          STATE_MACHINE_NAME="MyStateMachine-22a18e33"
-          STATE_MACHINE_ARN="arn:aws:states:us-east-1:648637468459:stateMachine:$STATE_MACHINE_NAME"
-          ROLE_ARN="arn:aws:iam::648637468459:role/service-role/StepFunctions-$STATE_MACHINE_NAME-role-rvcqj4u7h"
+          STATE_MACHINE_ARN="arn:aws:states:us-east-1:648637468459:stateMachine:MyStateMachine-22a18e33"
+          ROLE_ARN="arn:aws:iam::648637468459:role/service-role/StepFunctions-MyStateMachine-22a18e33-role-rvcqj4u7h"
 
           if [ "${{ steps.check_state_machine.outputs.exists }}" = "false" ]; then
-            echo "Creating state machine..."
             aws stepfunctions create-state-machine \
-              --name "$STATE_MACHINE_NAME" \
+              --name "MyStateMachine-22a18e33" \
               --definition file://state-machine-definition.json \
               --role-arn "$ROLE_ARN" \
               --type "STANDARD"
           else
-            echo "Updating state machine..."
             aws stepfunctions update-state-machine \
               --state-machine-arn "$STATE_MACHINE_ARN" \
               --definition file://state-machine-definition.json \
@@ -126,7 +117,7 @@ EOF
       - name: Wait for container healthcheck
         run: |
           echo "Waiting for container to become healthy..."
-          for i in {1..15}; do
+          for i in {1..10}; do
             status=$(docker inspect --format='{{json .State.Health.Status}}' $(docker ps -qf name=glue_pyspark))
             if [ "$status" = "\"healthy\"" ]; then
               echo "Container is healthy!"
